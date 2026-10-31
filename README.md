@@ -40,6 +40,10 @@ Research modes include **quick scan**, **focused study**, **deep strategy**, and
 
 Ask Claude Code to **research this product idea before building**, **compare its competitors and risks**, **turn the findings into an MVP plan**, **threat-model a sign-in flow**, or **prepare an evidence-based pre-launch checklist**.
 
+## What to expect
+
+It won’t do everything automatically: external tools must be installed and configured, and the CLI’s research command creates a brief rather than conducting live research. The skill guides the coding agent through that research and asks it to distinguish evidence from assumptions, then verify real code and behavior instead of claiming checks passed without running them.
+
 ## CLI Tool
 
 The skill includes a Python CLI for programmatic access to workflows and templates:
