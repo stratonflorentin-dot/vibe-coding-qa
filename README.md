@@ -17,8 +17,10 @@ To add it to another project, copy the `vibe-coding-qa` folder into that project
 ## What it helps with
 
 - Plan features, trust boundaries, and acceptance checks before implementation.
-- Build accessible, responsive interfaces that follow existing design systems.
+- Review code quality with incremental gates, baseline-aware findings, and dry-run fixes.
+- Build accessible, responsive interfaces; stress-test realistic edge data and motion.
 - Review authentication, authorization, database RLS, secrets, input validation, CSRF, and API abuse controls.
+- Integrate APIs with explicit contracts, holdout checks, and guarded read/write behavior.
 - Check production builds, performance, TLS and response headers, email/SMS flows, and launch readiness.
 - Apply Tanzania-focused privacy, messaging, domain, education-schema, and bilingual-content checks when relevant.
 
@@ -26,6 +28,7 @@ To add it to another project, copy the `vibe-coding-qa` folder into that project
 
 - `references/launch-framework.md` — lifecycle, security audit, performance, transport, messaging, and localized pre-launch checks.
 - `references/work-templates.md` — feature briefs, trust-boundary inventories, verification matrices, findings, and launch decisions.
+- `references/research-and-advanced-qa.md` — source-backed patterns for code-quality tools, safe research, API contracts, UI stress testing, motion, and agent boundaries.
 
 ## Try it
 

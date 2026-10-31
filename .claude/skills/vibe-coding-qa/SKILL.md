@@ -1,13 +1,13 @@
 ---
 name: vibe-coding-qa
-description: "This skill should be used when planning, building, hardening, auditing, or preparing AI-assisted web applications for launch. It covers Claude Code and other vibe-coding workflows; architecture and project memory; React, TypeScript, and design systems; application security, authentication, database RLS, secrets, API validation and rate limits; production builds and performance; email deliverability; and Tanzania PDPA, TCRA, .tz, bilingual, or education-platform checks."
+description: "This skill should be used when planning, building, hardening, auditing, or preparing AI-assisted web applications for launch. It covers Claude Code workflows; architecture; deterministic code-quality gates; UI resilience and motion; security and authorized testing; API integrations; evidence-based research; authentication, database RLS, secrets, validation and rate limits; performance; email; and Tanzania-focused privacy, messaging, domain, bilingual, and education checks."
 ---
 
 # Vibe Coding Lifecycle and Pre-Launch QA
 
 ## Purpose
 
-Guide AI-assisted web projects from a clear specification through prototype, deterministic hardening, verification, and an evidence-based go-live decision. Treat generated code as untrusted until inspected and tested. Apply the detailed checklist in `references/launch-framework.md` when conducting a security review or launch audit; use `references/work-templates.md` to produce consistent briefs, test matrices, findings, and sign-off records.
+Guide AI-assisted web projects from a clear specification through prototype, deterministic hardening, verification, and an evidence-based go-live decision. Treat generated code as untrusted until inspected and tested. Apply `references/launch-framework.md` for launch audits, `references/work-templates.md` for briefs and verification records, and `references/research-and-advanced-qa.md` for repository intelligence, advanced UI checks, safe security research, API discovery, and bounded agent delegation.
 
 ## Operating Rules
 
