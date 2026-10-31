@@ -1,7 +1,7 @@
 # Vibe Coding QA
 
 <p align="center">
-  <img src="phone-mascots.gif" alt="Looping cartoon of two teenagers in colorful streetwear" width="560">
+  <img src="phone-mascots.gif" alt="Looping cartoon of Mario and Luigi in red and green outfits" width="560">
 </p>
 
 A Claude Code skill for taking product ideas and AI-assisted web projects from research to a safer, evidence-based launch. It helps assess product opportunities before building, then plan, implement, review, and verify applications without treating a successful build as proof of security or compliance.

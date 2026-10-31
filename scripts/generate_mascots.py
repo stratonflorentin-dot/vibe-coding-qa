@@ -19,7 +19,7 @@ def star(draw, center_x, center_y, radius, fill):
     draw.polygon(points, fill=fill)
 
 
-def draw_teen(scale, skin, hair, jacket, shirt, trousers, shoes, bob, wave, style):
+def draw_brother(scale, skin, shirt, overalls, cap, shoes, bob, wave, initial):
     sprite = Image.new("RGBA", (270, 380), (0, 0, 0, 0))
     draw = ImageDraw.Draw(sprite)
     ink = (37, 43, 65, 255)
@@ -30,49 +30,50 @@ def draw_teen(scale, skin, hair, jacket, shirt, trousers, shoes, bob, wave, styl
 
     draw.line((111, 267 + shift, 99, 326 + shift), fill=ink, width=22)
     draw.line((164, 267 + shift, 178, 326 + shift), fill=ink, width=22)
-    draw.line((111, 271 + shift, 101, 325 + shift), fill=trousers, width=15)
-    draw.line((164, 271 + shift, 176, 325 + shift), fill=trousers, width=15)
+    draw.line((111, 271 + shift, 101, 325 + shift), fill=overalls, width=15)
+    draw.line((164, 271 + shift, 176, 325 + shift), fill=overalls, width=15)
     rounded(draw, (76, 322 + shift, 121, 347 + shift), 12, shoes, ink, 5)
     rounded(draw, (160, 322 + shift, 207, 347 + shift), 12, shoes, ink, 5)
     draw.line((85, 337 + shift, 110, 337 + shift), fill=(177, 187, 202, 255), width=3)
     draw.line((170, 337 + shift, 196, 337 + shift), fill=(177, 187, 202, 255), width=3)
 
-    rounded(draw, (81, 156 + shift, 195, 284 + shift), 29, trousers, ink, 6)
-    draw.line((138, 169 + shift, 138, 278 + shift), fill=ink, width=4)
-    rounded(draw, (157, 220 + shift, 185, 249 + shift), 6, (94, 113, 131, 255), ink, 3)
-    draw.line((162, 229 + shift, 180, 229 + shift), fill=(228, 204, 150, 255), width=3)
+    rounded(draw, (81, 156 + shift, 195, 284 + shift), 29, shirt, ink, 6)
+    draw.polygon([(91, 163 + shift), (119, 169 + shift), (124, 274 + shift), (98, 274 + shift)], fill=overalls, outline=ink)
+    draw.polygon([(184, 163 + shift), (156, 169 + shift), (151, 274 + shift), (177, 274 + shift)], fill=overalls, outline=ink)
+    rounded(draw, (96, 205 + shift, 180, 282 + shift), 12, overalls, ink, 5)
+    rounded(draw, (116, 235 + shift, 160, 265 + shift), 6, shirt, ink, 3)
+    draw.ellipse((83, 215 + shift, 99, 231 + shift), fill=(255, 220, 116, 255), outline=ink, width=2)
+    draw.ellipse((177, 215 + shift, 193, 231 + shift), fill=(255, 220, 116, 255), outline=ink, width=2)
 
     draw.line((82, 176 + shift, 38, 208 + shift, 27, 170 + shift + wave), fill=ink, width=26, joint="curve")
-    draw.line((82, 176 + shift, 38, 208 + shift, 27, 170 + shift + wave), fill=jacket, width=18, joint="curve")
+    draw.line((82, 176 + shift, 38, 208 + shift, 27, 170 + shift + wave), fill=shirt, width=18, joint="curve")
     draw.line((27, 170 + shift + wave, 16, 159 + shift + wave), fill=skin, width=17)
     draw.line((190, 176 + shift, 226, 196 + shift, 240, 157 + shift - wave), fill=ink, width=26, joint="curve")
-    draw.line((190, 176 + shift, 226, 196 + shift, 240, 157 + shift - wave), fill=jacket, width=18, joint="curve")
+    draw.line((190, 176 + shift, 226, 196 + shift, 240, 157 + shift - wave), fill=shirt, width=18, joint="curve")
     draw.line((240, 157 + shift - wave, 247, 142 + shift - wave), fill=skin, width=17)
 
+    draw.ellipse((8, 148 + shift + wave, 34, 174 + shift + wave), fill=white, outline=ink, width=4)
+    draw.ellipse((232, 131 + shift - wave, 258, 158 + shift - wave), fill=white, outline=ink, width=4)
+
     rounded(draw, (119, 132 + shift, 158, 178 + shift), 14, skin)
-    rounded(draw, (72, 162 + shift, 199, 280 + shift), 26, jacket, ink, 6)
-    rounded(draw, (119, 167 + shift, 153, 231 + shift), 8, shirt)
-    draw.line((137, 168 + shift, 137, 223 + shift), fill=ink, width=3)
-    rounded(draw, (80, 225 + shift, 107, 257 + shift), 5, jacket, ink, 3)
-    rounded(draw, (164, 225 + shift, 190, 257 + shift), 5, jacket, ink, 3)
-    draw.ellipse((88, 238 + shift, 98, 248 + shift), fill=(255, 224, 147, 255))
-    draw.ellipse((172, 238 + shift, 182, 248 + shift), fill=(255, 224, 147, 255))
+    rounded(draw, (72, 162 + shift, 199, 280 + shift), 26, shirt, ink, 6)
+    draw.polygon([(89, 164 + shift), (112, 170 + shift), (122, 275 + shift), (99, 275 + shift)], fill=overalls, outline=ink)
+    draw.polygon([(182, 164 + shift), (159, 170 + shift), (149, 275 + shift), (173, 275 + shift)], fill=overalls, outline=ink)
+    rounded(draw, (96, 205 + shift, 180, 282 + shift), 12, overalls, ink, 5)
+    rounded(draw, (116, 235 + shift, 160, 265 + shift), 6, shirt, ink, 3)
+    draw.ellipse((83, 215 + shift, 99, 231 + shift), fill=(255, 220, 116, 255), outline=ink, width=2)
+    draw.ellipse((177, 215 + shift, 193, 231 + shift), fill=(255, 220, 116, 255), outline=ink, width=2)
 
     draw.ellipse((75, 47 + shift, 193, 173 + shift), fill=skin, outline=ink, width=5)
     draw.ellipse((65, 94 + shift, 84, 121 + shift), fill=skin, outline=ink, width=4)
     draw.ellipse((184, 94 + shift, 203, 121 + shift), fill=skin, outline=ink, width=4)
-
-    if style == "curly":
-        draw.ellipse((74, 28 + shift, 190, 112 + shift), fill=hair, outline=ink, width=5)
-        for x, y, radius in [(82, 49, 23), (110, 31, 24), (142, 30, 25), (171, 43, 23), (184, 62, 18)]:
-            draw.ellipse((x - radius, y - radius + shift, x + radius, y + radius + shift), fill=hair, outline=ink, width=4)
-        draw.arc((89, 34 + shift, 168, 89 + shift), 195, 340, fill=(221, 167, 114, 255), width=5)
+    draw.ellipse((73, 27 + shift, 197, 103 + shift), fill=cap, outline=ink, width=5)
+    rounded(draw, (55, 70 + shift, 214, 101 + shift), 15, cap, ink, 4)
+    draw.ellipse((111, 41 + shift, 159, 86 + shift), fill=white, outline=ink, width=3)
+    if initial == "M":
+        draw.line((121, 75 + shift, 121, 53 + shift, 135, 66 + shift, 149, 53 + shift, 149, 75 + shift), fill=cap, width=5, joint="curve")
     else:
-        draw.ellipse((71, 28 + shift, 196, 111 + shift), fill=hair, outline=ink, width=5)
-        rounded(draw, (69, 41 + shift, 193, 84 + shift), 18, hair, ink, 4)
-        draw.polygon([(91, 63 + shift), (160, 56 + shift), (185, 77 + shift), (148, 91 + shift), (100, 83 + shift)], fill=hair)
-        rounded(draw, (71, 25 + shift, 195, 63 + shift), 16, (89, 154, 192, 255), ink, 4)
-        draw.arc((85, 33 + shift, 180, 75 + shift), 190, 345, fill=(255, 196, 130, 255), width=4)
+        draw.line((124, 52 + shift, 124, 76 + shift, 148, 76 + shift), fill=cap, width=6, joint="curve")
 
     draw.line((101, 99 + shift, 119, 96 + shift), fill=ink, width=4)
     draw.line((151, 96 + shift, 170, 99 + shift), fill=ink, width=4)
@@ -81,6 +82,8 @@ def draw_teen(scale, skin, hair, jacket, shirt, trousers, shoes, bob, wave, styl
     draw.ellipse((88, 127 + shift, 108, 139 + shift), fill=(244, 151, 145, 150))
     draw.ellipse((166, 127 + shift, 186, 139 + shift), fill=(244, 151, 145, 150))
     draw.arc((119, 116 + shift, 154, 151 + shift), 10, 168, fill=ink, width=4)
+    draw.ellipse((101, 130 + shift, 137, 147 + shift), fill=ink)
+    draw.ellipse((136, 130 + shift, 172, 147 + shift), fill=ink)
     draw.arc((80, 147 + shift, 191, 179 + shift), 190, 350, fill=ink, width=4)
 
     draw.line((103, 176 + shift, 113, 189 + shift), fill=(255, 221, 135, 255), width=4)
@@ -114,8 +117,8 @@ frames = []
 for frame_index in range(FRAME_COUNT):
     phase = 2 * pi * frame_index / FRAME_COUNT
     canvas = draw_background(frame_index)
-    left = draw_teen(0.96, (177, 112, 83, 255), (43, 39, 54, 255), (226, 102, 99, 255), (255, 225, 200, 255), (54, 65, 91, 255), (255, 250, 239, 255), 5 * sin(phase), int(8 * sin(phase * 2)), "curly")
-    right = draw_teen(0.82, (219, 164, 120, 255), (52, 44, 42, 255), (74, 151, 190, 255), (228, 242, 241, 255), (103, 113, 137, 255), (255, 250, 239, 255), 6 * sin(phase + 1.0), int(7 * sin(phase * 2 + 1.0)), "beanie")
+    left = draw_brother(0.96, (177, 112, 83, 255), (226, 58, 54, 255), (45, 91, 168, 255), (219, 49, 45, 255), (112, 69, 48, 255), 5 * sin(phase), int(8 * sin(phase * 2)), "M")
+    right = draw_brother(0.82, (219, 164, 120, 255), (52, 158, 82, 255), (45, 91, 168, 255), (45, 158, 81, 255), (112, 69, 48, 255), 6 * sin(phase + 1.0), int(7 * sin(phase * 2 + 1.0)), "L")
     canvas.alpha_composite(left, (222, 40 + int(5 * sin(phase))))
     canvas.alpha_composite(right, (505, 101 + int(6 * sin(phase + 1.0))))
     frames.append(canvas.convert("P", palette=Image.Palette.ADAPTIVE, colors=128))
