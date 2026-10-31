@@ -1,13 +1,13 @@
 ---
 name: vibe-coding-qa
-description: "This skill should be used when planning, building, hardening, auditing, or preparing AI-assisted web applications for launch. It covers Claude Code workflows; architecture; deterministic code-quality gates; UI resilience and motion; security and authorized testing; API integrations; evidence-based research; authentication, database RLS, secrets, validation and rate limits; performance; email; and Tanzania-focused privacy, messaging, domain, bilingual, and education checks."
+description: "This skill should be used when researching, planning, building, hardening, auditing, or preparing AI-assisted web products for launch. It covers Claude Code, global product and competitor research, feasibility and MVP strategy, software architecture, deterministic code-quality gates, UI resilience and motion, authorized security research, API integrations, authentication, database RLS, secrets, validation, rate limits, performance, email, and Tanzania-focused privacy and market checks."
 ---
 
 # Vibe Coding Lifecycle and Pre-Launch QA
 
 ## Purpose
 
-Guide AI-assisted web projects from a clear specification through prototype, deterministic hardening, verification, and an evidence-based go-live decision. Treat generated code as untrusted until inspected and tested. Apply `references/launch-framework.md` for launch audits, `references/work-templates.md` for briefs and verification records, and `references/research-and-advanced-qa.md` for repository intelligence, advanced UI checks, safe security research, API discovery, and bounded agent delegation.
+Guide AI-assisted web projects from idea and product research through specification, prototype, deterministic hardening, verification, and an evidence-based go-live decision. Treat generated code and external research claims as untrusted until inspected and sourced. For pre-build market and product strategy, use `references/product-intelligence.md` and its report template; for codebase research and advanced QA, use `references/research-and-advanced-qa.md`; for implementation and launch, use `references/launch-framework.md` and `references/work-templates.md`.
 
 ## Operating Rules
 
@@ -21,6 +21,10 @@ Guide AI-assisted web projects from a clear specification through prototype, det
 - Never add consent preselected by default. Collect only necessary personal data, make purposes and choices clear, and distinguish consent from other lawful bases.
 
 ## Workflow
+
+### Product intelligence mode
+
+When a user presents a product idea, design, specification, or market-research question, first extract confirmed requirements, assumptions, and unknowns. Select a quick, focused, deep, or build-blueprint mode in `references/product-intelligence.md`; default to a right-sized research scope, cite important claims, and keep research separate from implementation approval. Do not force market research onto a direct coding request that does not need it.
 
 ### 1. Establish scope and blueprint
 
