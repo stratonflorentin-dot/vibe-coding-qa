@@ -1,7 +1,7 @@
 # Vibe Coding QA
 
 <p align="center">
-  <img src="phone-mascots.gif" alt="Looping cartoon animation of two cheerful smartphone characters" width="560">
+  <img src="phone-mascots.gif" alt="Looping cartoon of two teenagers in colorful streetwear" width="560">
 </p>
 
 A Claude Code skill for taking AI-assisted web projects from idea to a safer, evidence-based launch. It helps plan, build, review, and verify generated applications without treating a successful build as proof of security or compliance.
@@ -32,3 +32,12 @@ To add it to another project, copy the `vibe-coding-qa` folder into that project
 Ask Claude Code to **review this project using the vibe-coding-qa skill**, **threat-model this sign-in flow**, or **prepare an evidence-based pre-launch checklist**.
 
 The skill records what was actually verified and flags unknowns. Its regulatory checklists are not legal advice or compliance certification; confirm current requirements with official sources and qualified specialists.
+
+## Mascot animation
+
+The looping cartoon GIF is generated with Python and Pillow. Recreate it from the repository root with:
+
+```sh
+python -m pip install pillow
+python scripts/generate_mascots.py
+```
