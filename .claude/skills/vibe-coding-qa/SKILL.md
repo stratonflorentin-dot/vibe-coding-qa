@@ -82,7 +82,7 @@ The skill includes a Python CLI at `scripts/vibe_coding_qa.py` for programmatic 
 python scripts/vibe_coding_qa.py --help
 
 # Product research
-python scripts/vibe_coding_qa.py research --product "AI code review tool" --mode deep --template
+python scripts/vibe_coding_qa.py research --product "AI code review tool" --mode deep --output research-brief.md
 
 # Pre-launch audit checklists
 python scripts/vibe_coding_qa.py audit --checklist launch
@@ -102,4 +102,4 @@ python scripts/vibe_coding_qa.py init --path /path/to/project
 python scripts/vibe_coding_qa.py validate
 ```
 
-The CLI loads reference files from `references/` and can be used independently of the agent skill. It does not perform live web research; it provides the methodology, templates, and checklists for the agent to execute with appropriate tools.
+The CLI loads reference files from `references/` and can be used independently of the agent skill. It does not perform live web research; it provides the methodology, templates, and checklists for the agent to execute with appropriate tools. For external-tool commands, environment setup, and safety boundaries, follow `scripts/tool-integrations.md`. Optional tools are never silently installed, PentAGI never starts flows through this adapter, REA evidence is written to an explicit file, and API Anything writes require a reviewed dry run plus explicit confirmation.
