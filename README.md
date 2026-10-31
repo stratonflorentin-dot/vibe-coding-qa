@@ -39,6 +39,37 @@ Research modes include **quick scan**, **focused study**, **deep strategy**, and
 
 Ask Claude Code to **research this product idea before building**, **compare its competitors and risks**, **turn the findings into an MVP plan**, **threat-model a sign-in flow**, or **prepare an evidence-based pre-launch checklist**.
 
+## CLI Tool
+
+The skill includes a Python CLI for programmatic access to workflows and templates:
+
+```bash
+# From the skill directory
+python scripts/vibe_coding_qa.py --help
+
+# Product research
+python scripts/vibe_coding_qa.py research --product "AI code review tool" --mode deep --template
+
+# Pre-launch audit checklists
+python scripts/vibe_coding_qa.py audit --checklist launch
+python scripts/vibe_coding_qa.py audit --checklist security
+python scripts/vibe_coding_qa.py audit --checklist tanzania
+
+# Work templates
+python scripts/vibe_coding_qa.py template --type feature-brief
+python scripts/vibe_coding_qa.py template --type verification
+python scripts/vibe_coding_qa.py template --type finding
+python scripts/vibe_coding_qa.py template --type launch-decision
+
+# Install skill into another project
+python scripts/vibe_coding_qa.py init --path /path/to/project
+
+# Validate skill structure
+python scripts/vibe_coding_qa.py validate
+```
+
+The CLI loads reference files from `references/` and can be used independently of the agent skill. It does not perform live web research; it provides the methodology, templates, and checklists for the agent to execute with appropriate tools.
+
 The skill records what was actually verified and flags unknowns. Its regulatory checklists are not legal advice or compliance certification; confirm current requirements with official sources and qualified specialists.
 
 ## Mascot animation

@@ -72,3 +72,34 @@ When a user presents a product idea, design, specification, or market-research q
 ## Deliverable Style
 
 For implementation tasks, make scoped changes and report what changed, what was actually verified, and any material residual risks. For audits, prioritize findings by severity and exploitability; include affected location, evidence, impact, and a concrete remediation. Separate blockers from recommendations and avoid speculative vulnerabilities presented as confirmed facts.
+
+## CLI Tool
+
+The skill includes a Python CLI at `scripts/vibe_coding_qa.py` for programmatic access to workflows and templates.
+
+```bash
+# From the skill directory
+python scripts/vibe_coding_qa.py --help
+
+# Product research
+python scripts/vibe_coding_qa.py research --product "AI code review tool" --mode deep --template
+
+# Pre-launch audit checklists
+python scripts/vibe_coding_qa.py audit --checklist launch
+python scripts/vibe_coding_qa.py audit --checklist security
+python scripts/vibe_coding_qa.py audit --checklist tanzania
+
+# Work templates
+python scripts/vibe_coding_qa.py template --type feature-brief
+python scripts/vibe_coding_qa.py template --type verification
+python scripts/vibe_coding_qa.py template --type finding
+python scripts/vibe_coding_qa.py template --type launch-decision
+
+# Install skill into another project
+python scripts/vibe_coding_qa.py init --path /path/to/project
+
+# Validate skill structure
+python scripts/vibe_coding_qa.py validate
+```
+
+The CLI loads reference files from `references/` and can be used independently of the agent skill. It does not perform live web research; it provides the methodology, templates, and checklists for the agent to execute with appropriate tools.
