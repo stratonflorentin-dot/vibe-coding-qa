@@ -1,0 +1,9 @@
+.qa-research-smoke.md
+vcqa-reports*
+__pycache__/
+*.pyc
+.env
+.DS_Store
+node_modules/
+.vscode/
+.idea/
