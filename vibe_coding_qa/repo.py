@@ -1,6 +1,7 @@
 """Repository loader: local path or GitHub clone."""
 
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -11,6 +12,11 @@ from . import Finding, Severity, Status
 
 def is_git_url(value: str) -> bool:
     return value.startswith(("http://", "https://", "git@")) or value.endswith(".git")
+
+
+def _sanitize_url(url: str) -> str:
+    """Remove credentials from a URL for safe logging."""
+    return re.sub(r"https?://[^:]+:[^@]+@", "https://***:***@", url)
 
 
 def clone_repo(github_ref: str, token: str | None = None, workdir: Path | None = None) -> Path:
@@ -32,22 +38,32 @@ def clone_repo(github_ref: str, token: str | None = None, workdir: Path | None =
     else:
         url = github_ref
 
-    if token and url.startswith("https://"):
-        url = url.replace("https://", f"https://{token}@", 1)
-
+    # Use git credential helper via environment variable to avoid token in URL
     env = os.environ.copy()
-    # Prevent interactive prompts.
     env["GIT_TERMINAL_PROMPT"] = "0"
+    
+    if token and url.startswith("https://"):
+        # Use GIT_ASKPASS or credential helper via env to avoid token in command line
+        # This is safer than embedding in URL
+        env["GIT_ASKPASS"] = "echo"
+        env["GIT_USERNAME"] = "token"
+        env["GIT_PASSWORD"] = token
+        cmd = ["git", "clone", "--depth", "1", "--single-branch", url, str(workdir)]
+    else:
+        cmd = ["git", "clone", "--depth", "1", "--single-branch", url, str(workdir)]
 
     result = subprocess.run(
-        ["git", "clone", "--depth", "1", "--single-branch", url, str(workdir)],
+        cmd,
         capture_output=True,
         text=True,
         env=env,
         check=False,
     )
+    
     if result.returncode != 0:
-        raise RuntimeError(f"Failed to clone {url}: {result.stderr}")
+        # Sanitize any URLs in stderr before raising
+        sanitized_stderr = _sanitize_url(result.stderr)
+        raise RuntimeError(f"Failed to clone {_sanitize_url(url)}: {sanitized_stderr}")
     return workdir
 
 

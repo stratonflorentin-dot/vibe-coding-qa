@@ -19,6 +19,27 @@ SECRET_PATTERNS = [
 ]
 
 
+# Compile all secret patterns for redaction
+_SECRET_REDACTION_PATTERNS = [p for _, p, _ in SECRET_PATTERNS]
+
+
+def redact_secrets(text: str) -> str:
+    """Redact known secret patterns from text."""
+    for pattern in _SECRET_REDACTION_PATTERNS:
+        text = pattern.sub("[REDACTED]", text)
+    return text
+
+
+def is_secret_finding(finding: Finding) -> bool:
+    """Check if a finding is related to exposed secrets."""
+    secret_rules = {
+        "private-key", "aws-access-key", "generic-api-key", "supabase-service-key",
+        "openai-key", "stripe-key", "password-in-code", "url-with-credentials",
+        "client-side-secret", "committed-env-file", "session-secret-hardcoded"
+    }
+    return finding.rule.split(":")[-1] in secret_rules
+
+
 SQL_INJECTION_HINTS = [
     re.compile(r"\.query\s*\(\s*[^,)]*%s", re.IGNORECASE),
     re.compile(r"execute\s*\(\s*['\"].*%s", re.IGNORECASE),

@@ -160,6 +160,7 @@ class SecurityScanner(BaseScanner):
         if not sql_files and not (self.repo / "supabase").is_dir():
             return
         rls_enabled_tables: set[str] = set()
+        tables_with_policies: set[str] = set()
         tables_seen: set[str] = set()
         for path in sql_files:
             text = path.read_text(encoding="utf-8", errors="ignore")
@@ -175,18 +176,29 @@ class SecurityScanner(BaseScanner):
                 if re.search(r"create\s+policy\s+.*on\s+([a-zA-Z_][a-zA-Z0-9_]*)", norm, re.IGNORECASE):
                     policy_match = re.search(r"create\s+policy\s+.*on\s+([a-zA-Z_][a-zA-Z0-9_]*)", norm, re.IGNORECASE)
                     if policy_match:
-                        rls_enabled_tables.add(policy_match.group(1).lower())
+                        tables_with_policies.add(policy_match.group(1).lower())
         for table in tables_seen:
             if table not in rls_enabled_tables:
-                self.add(
-                    rule="missing-rls",
-                    severity=Severity.CRITICAL,
-                    file=sql_files[0] if sql_files else self.repo / "supabase",
-                    line=1,
-                    message=f"Table '{table}' does not appear to have Row Level Security (RLS) enabled or policies defined.",
-                    suggestion="Enable RLS on every table and write explicit policies with auth checks.",
-                    confidence="medium",
-                )
+                if table in tables_with_policies:
+                    self.add(
+                        rule="policy-without-rls-enabled",
+                        severity=Severity.CRITICAL,
+                        file=sql_files[0] if sql_files else self.repo / "supabase",
+                        line=1,
+                        message=f"Table '{table}' has policies but Row Level Security is not enabled. Policies have no effect until RLS is enabled with 'ALTER TABLE ... ENABLE ROW LEVEL SECURITY'.",
+                        suggestion="Add 'ALTER TABLE {table} ENABLE ROW LEVEL SECURITY;' before creating policies.",
+                        confidence="high",
+                    )
+                else:
+                    self.add(
+                        rule="missing-rls",
+                        severity=Severity.CRITICAL,
+                        file=sql_files[0] if sql_files else self.repo / "supabase",
+                        line=1,
+                        message=f"Table '{table}' does not appear to have Row Level Security (RLS) enabled or policies defined.",
+                        suggestion="Enable RLS on every table and write explicit policies with auth checks.",
+                        confidence="medium",
+                    )
 
     def _scan_env_files(self) -> None:
         ignore = load_ignore_patterns(self.repo)

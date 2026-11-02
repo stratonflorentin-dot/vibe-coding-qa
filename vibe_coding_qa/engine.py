@@ -3,6 +3,7 @@
 import json
 import os
 import re
+import shlex
 import subprocess
 import time
 from pathlib import Path
@@ -56,10 +57,15 @@ def run_tests(repo: Path, command: str | None = None, timeout: int = 300, no_exe
     if no_execution:
         return {"status": Status.SKIP, "command": None, "summary": "Test execution disabled by --no-execution.", "duration_ms": 0}
 
+    # Destructive terms that should never be run automatically
     destructive_terms = ("rm -rf", "rm -fr", "rm -r", "kubectl delete", "drop", "deploy", "serverless deploy", "sls deploy")
 
     if command:
-        cmd = command.split()
+        # Use shlex.split to properly handle shell-style quoting
+        try:
+            cmd = shlex.split(command)
+        except ValueError as exc:
+            return {"status": Status.SKIP, "command": command, "summary": f"Invalid command syntax: {exc}", "duration_ms": 0}
         lowered = command.lower()
         if any(term in lowered for term in destructive_terms):
             return {
@@ -76,7 +82,7 @@ def run_tests(repo: Path, command: str | None = None, timeout: int = 300, no_exe
     env = os.environ.copy()
     env["CI"] = "true"
     env["NODE_ENV"] = "test"
-    command_str = " ".join(cmd)
+    command_str = " ".join(shlex.quote(c) for c in cmd)
     if any(term in command_str.lower() for term in destructive_terms):
         return {
             "status": Status.SKIP,
@@ -112,6 +118,7 @@ def run_tests(repo: Path, command: str | None = None, timeout: int = 300, no_exe
             "stderr": result.stderr,
             "duration_ms": duration_ms,
             "skipped": skipped,
+            "warning": "Test scripts execute project code. Review scripts before running in production environments.",
         }
     except FileNotFoundError as exc:
         return {"status": Status.SKIP, "command": command_str, "summary": f"Command not found: {exc}", "duration_ms": int((time.time() - start) * 1000)}
@@ -183,7 +190,8 @@ def run_pipeline(
             result.tests.update(run_tests(workdir, command=test_command, no_execution=no_execution))
 
         # Re-assess after potential fixes/tests.
-        assess(result)
+        assessment = assess(result)
+        result._assessment = assessment
 
         if output_dir:
             from .reporters import write_reports

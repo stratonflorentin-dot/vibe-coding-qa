@@ -57,7 +57,13 @@ def main(argv: list[str] | None = None) -> int:
         )
         print(release_decision(result))
         print(f"Reports written to: {Path(args.output).resolve()}")
-        return 2 if result.release_blocked else 0 if result.high_count == 0 else 1
+        # Use authoritative gate for exit code
+        gate = getattr(result, 'gate', 'unknown')
+        if gate == "block":
+            return 2
+        if gate == "fail":
+            return 1
+        return 0
 
     if args.command == "fix":
         result = run_pipeline(
@@ -71,7 +77,12 @@ def main(argv: list[str] | None = None) -> int:
         print(release_decision(result))
         mode = "applied" if args.apply else "previewed"
         print(f"Fixes {mode}; reports written to: {Path(args.output).resolve()}")
-        return 2 if result.release_blocked else 0 if result.high_count == 0 else 1
+        gate = getattr(result, 'gate', 'unknown')
+        if gate == "block":
+            return 2
+        if gate == "fail":
+            return 1
+        return 0
 
     if args.command == "gate":
         result = run_pipeline(
@@ -82,7 +93,12 @@ def main(argv: list[str] | None = None) -> int:
             github_token=args.github_token,
         )
         print(release_decision(result))
-        return 2 if result.release_blocked else 0 if result.high_count == 0 else 1
+        gate = getattr(result, 'gate', 'unknown')
+        if gate == "block":
+            return 2
+        if gate == "fail":
+            return 1
+        return 0
 
     return 0
 

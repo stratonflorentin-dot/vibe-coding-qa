@@ -1,4 +1,9 @@
-"""Dependency, lockfile, CI, and supply-chain scanner."""
+"""Dependency, lockfile, CI, and supply-chain scanner.
+
+This scanner performs local, static checks only. It does NOT query external
+vulnerability databases. Findings are labeled as 'heuristic' or 'verified'
+based on the evidence available locally.
+"""
 
 import json
 import re
@@ -11,11 +16,43 @@ from vibe_coding_qa import Finding, Severity
 class DependencyScanner(BaseScanner):
     module = "dependencies"
 
-    KNOWN_EOL = {
-        "lodash": "4.17.21",  # earlier versions have known vulnerabilities
-        "express": "4.17.3",
-        "jquery": "3.6.0",
-        "bootstrap": "4.6.1",
+    # Known vulnerable versions (historical data, not live advisories)
+    # These are examples of versions with known CVEs - in production you would
+    # use a proper vulnerability database like OSV, GitHub Advisory, or Snyk.
+    KNOWN_VULNERABLE_VERSIONS = {
+        "lodash": {
+            "versions": ["4.17.20", "4.17.19", "4.17.18", "4.17.17", "4.17.16", "4.17.15", "4.17.14", "4.17.13", "4.17.12", "4.17.11"],
+            "cve": "CVE-2021-23337",
+            "description": "Prototype pollution in lodash",
+        },
+        "express": {
+            "versions": ["4.17.2", "4.17.1", "4.17.0", "4.16.4", "4.16.3", "4.16.2", "4.16.1", "4.16.0"],
+            "cve": "CVE-2022-24999",
+            "description": "Open redirect in express",
+        },
+        "jquery": {
+            "versions": ["3.5.1", "3.5.0", "3.4.1", "3.4.0", "3.3.1", "3.3.0", "3.2.1", "3.2.0", "3.1.1", "3.1.0", "3.0.0"],
+            "cve": "CVE-2020-11023",
+            "description": "XSS in jQuery",
+        },
+    }
+
+    # Historically compromised packages (supply chain incidents)
+    # These are packages that were compromised at some point in history.
+    # Presence alone doesn't mean the current version is malicious.
+    HISTORICALLY_COMPROMISED = {
+        "event-stream": {
+            "incident": "event-stream@3.3.6 contained malicious code targeting Copay wallet (Nov 2018)",
+            "cve": "CVE-2018-19207",
+        },
+        "flatmap-stream": {
+            "incident": "flatmap-stream@0.1.1 was a malicious dependency of event-stream",
+            "cve": "CVE-2018-19207",
+        },
+        "left-pad": {
+            "incident": "left-pad was unpublished in 2016 causing widespread breakage; not malicious but demonstrates supply chain fragility",
+            "cve": None,
+        },
     }
 
     def scan(self) -> list[Finding]:
@@ -38,29 +75,32 @@ class DependencyScanner(BaseScanner):
         deps = {**data.get("dependencies", {}), **data.get("devDependencies", {})}
         for name, version in deps.items():
             cleaned = version.strip().lstrip("^~>=<")
-            if name in self.KNOWN_EOL:
-                try:
-                    if self._version_tuple(cleaned) < self._version_tuple(self.KNOWN_EOL[name]):
-                        self.add(
-                            rule="outdated-dependency",
-                            severity=Severity.MEDIUM,
-                            file=pkg,
-                            line=1,
-                            message=f"{name}@{version} is below the recommended floor ({self.KNOWN_EOL[name]}).",
-                            suggestion="Upgrade to a supported version and review the dependency's changelog for security fixes.",
-                            confidence="medium",
-                        )
-                except Exception:
-                    pass
-            if name in {"left-pad", "event-stream", "flatmap-stream"}:
+            
+            # Check for known vulnerable versions (heuristic based on historical data)
+            if name in self.KNOWN_VULNERABLE_VERSIONS:
+                vuln_info = self.KNOWN_VULNERABLE_VERSIONS[name]
+                if cleaned in vuln_info["versions"]:
+                    self.add(
+                        rule="vulnerable-dependency",
+                        severity=Severity.HIGH,
+                        file=pkg,
+                        line=1,
+                        message=f"{name}@{version} matches a historically vulnerable version ({vuln_info['cve']}: {vuln_info['description']}).",
+                        suggestion=f"Upgrade {name} to a patched version. Verify with a current vulnerability database (OSV, GitHub Advisory, npm audit).",
+                        confidence="medium",  # Based on historical data, not live check
+                    )
+            
+            # Check for historically compromised packages
+            if name in self.HISTORICALLY_COMPROMISED:
+                incident = self.HISTORICALLY_COMPROMISED[name]
                 self.add(
-                    rule="known-malicious-dependency",
-                    severity=Severity.CRITICAL,
+                    rule="historically-compromised-dependency",
+                    severity=Severity.MEDIUM,  # Lower severity - historical incident, not current threat
                     file=pkg,
                     line=1,
-                    message=f"Dependency '{name}' has a documented malicious history.",
-                    suggestion="Remove and replace this dependency immediately.",
-                    confidence="high",
+                    message=f"Dependency '{name}' was involved in a historical supply-chain incident: {incident['incident']}.",
+                    suggestion=f"Verify the current version is not affected. Check {incident['cve'] or 'supply chain advisories'} for details. This is a historical finding, not a confirmed current vulnerability.",
+                    confidence="low",  # Historical incident, not current verification
                 )
 
     def _scan_python_deps(self) -> None:
@@ -95,16 +135,6 @@ class DependencyScanner(BaseScanner):
                 suggestion="Commit a lockfile to ensure reproducible installs and supply-chain audits.",
                 confidence="high",
             )
-        lock_age = None
-        for name in ("package-lock.json", "yarn.lock", "pnpm-lock.yaml"):
-            lock = self.repo / name
-            if lock.is_file():
-                lock_age = lock.stat().st_mtime
-                break
-        pkg_age = pkg.stat().st_mtime if pkg.is_file() else None
-        if lock_age and pkg_age and abs(lock_age - pkg_age) > 86400:
-            # Heuristic only; lockfile could still be current.
-            pass
 
     def _scan_ci_workflows(self) -> None:
         workflows = self.repo / ".github" / "workflows"

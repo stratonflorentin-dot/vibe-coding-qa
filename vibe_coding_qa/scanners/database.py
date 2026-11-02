@@ -23,6 +23,7 @@ class DatabaseScanner(BaseScanner):
         text = path.read_text(encoding="utf-8", errors="ignore")
         tables: list[tuple[str, int]] = []
         rls_tables: set[str] = set()
+        tables_with_policies: set[str] = set()
         policies: dict[str, list[tuple[int, str]]] = {}
         for i, raw in enumerate(text.splitlines(), 1):
             norm = normalize_line(raw)
@@ -36,6 +37,7 @@ class DatabaseScanner(BaseScanner):
             policy = re.search(r"create\s+policy\s+\S+\s+on\s+([a-zA-Z_][a-zA-Z0-9_]*)\s+.*(for\s+all|for\s+select|for\s+insert|for\s+update|for\s+delete)", norm, re.IGNORECASE)
             if policy:
                 table = policy.group(1).lower()
+                tables_with_policies.add(table)
                 policies.setdefault(table, []).append((i, norm))
             if re.search(r"role\s*=\s*['\"]?(admin|user|editor)['\"]?", raw, re.IGNORECASE) and "set" in norm.lower():
                 self.add(
@@ -48,16 +50,27 @@ class DatabaseScanner(BaseScanner):
                     confidence="low",
                 )
         for table, line in tables:
-            if table not in rls_tables and not policies.get(table):
-                self.add(
-                    rule="table-without-rls",
-                    severity=Severity.CRITICAL,
-                    file=path,
-                    line=line,
-                    message=f"Table '{table}' has no Row Level Security policy.",
-                    suggestion="Enable RLS and create explicit policies that check the requesting user.",
-                    confidence="medium",
-                )
+            if table not in rls_tables:
+                if table in tables_with_policies:
+                    self.add(
+                        rule="policy-without-rls-enabled",
+                        severity=Severity.CRITICAL,
+                        file=path,
+                        line=line,
+                        message=f"Table '{table}' has policies but Row Level Security is not enabled. Policies have no effect until RLS is enabled with 'ALTER TABLE ... ENABLE ROW LEVEL SECURITY'.",
+                        suggestion="Add 'ALTER TABLE {table} ENABLE ROW LEVEL SECURITY;' before creating policies.",
+                        confidence="high",
+                    )
+                else:
+                    self.add(
+                        rule="table-without-rls",
+                        severity=Severity.CRITICAL,
+                        file=path,
+                        line=line,
+                        message=f"Table '{table}' has no Row Level Security policy.",
+                        suggestion="Enable RLS and create explicit policies that check the requesting user.",
+                        confidence="medium",
+                    )
         for table, entries in policies.items():
             for line, norm in entries:
                 if "using" not in norm.lower() and "with check" not in norm.lower():

@@ -3,6 +3,10 @@
 The core scanner works without an AI provider. When VCQA_AI_PROVIDER and
 VCQA_AI_API_KEY are configured, the engine can ask a compatible API for
 additional context on selected findings.
+
+Security: By default, secret-related findings are excluded from external review.
+Set VCQA_AI_INCLUDE_SECRETS=1 to opt-in to sharing redacted secret contexts.
+All code snippets are redacted before transmission.
 """
 
 import json
@@ -14,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from . import Finding
+from .scanners import redact_secrets, is_secret_finding
 
 
 class AIProvider(ABC):
@@ -52,6 +57,8 @@ class OpenRouterAIProvider(AIProvider):
 
     def review(self, finding: Finding, context_lines: list[str] | None = None) -> dict[str, Any]:
         snippet = "\n".join(context_lines) if context_lines else ""
+        # Redact secrets from the snippet before sending
+        snippet = redact_secrets(snippet)
         prompt = (
             f"You are a senior security engineer reviewing a static-analysis finding.\n\n"
             f"Rule: {finding.rule}\n"
@@ -59,7 +66,7 @@ class OpenRouterAIProvider(AIProvider):
             f"File: {finding.file}:{finding.line}\n"
             f"Message: {finding.message}\n"
             f"Suggestion: {finding.suggestion}\n"
-            f"Code context:\n{snippet}\n\n"
+            f"Code context (secrets redacted):\n{snippet}\n\n"
             f"Explain why this matters, identify the likely root cause, and suggest a targeted code change. Keep it concise."
         )
         payload = {
@@ -120,8 +127,12 @@ def review_findings(repo: Path, findings: list[Finding], provider: AIProvider | 
     if isinstance(provider, NullAIProvider):
         return []
     reviews: list[dict[str, Any]] = []
+    include_secrets = os.environ.get("VCQA_AI_INCLUDE_SECRETS", "0") in ("1", "true", "yes")
     for finding in findings:
         if finding.severity.value not in ("critical", "high"):
+            continue
+        # Skip secret-related findings unless explicitly opted in
+        if is_secret_finding(finding) and not include_secrets:
             continue
         context: list[str] = []
         file_path = repo / finding.file

@@ -31,7 +31,7 @@ class SampleRepoTests(TestCase):
         self.assertIn("security:firebase-insecure-rules", rules)
         self.assertIn("database:table-without-rls", rules)
         self.assertIn("dependencies:missing-lockfile", rules)
-        self.assertIn("dependencies:outdated-dependency", rules)
+        self.assertIn("dependencies:vulnerable-dependency", rules)
         self.assertTrue(result.release_blocked)
 
     def test_clean_repo_has_open_gate(self):

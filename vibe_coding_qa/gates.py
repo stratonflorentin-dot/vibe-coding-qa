@@ -157,6 +157,21 @@ def assess(result: ScanResult, minimum_score: int | None = None) -> dict:
 
 
 def release_decision(result: ScanResult) -> str:
+    # Use authoritative assessment if available
+    if result._assessment:
+        gate = result._assessment.get("gate", "unknown")
+        overall = result._assessment.get("overall_score", 0)
+        minimum = result._assessment.get("minimum_score", 60)
+        if gate == "block":
+            return "BLOCKED: critical issues or failing tests must be resolved before release."
+        if gate == "fail":
+            if result.critical_count > 0:
+                return "BLOCKED: critical issues or failing tests must be resolved before release."
+            if result.high_count > 0:
+                return f"FAIL: high-severity findings remain; fix before release."
+            if overall < minimum:
+                return f"FAIL: overall readiness score ({overall}) is below the minimum threshold ({minimum})."
+    # Fallback to legacy logic
     if result.release_blocked:
         return "BLOCKED: critical issues or failing tests must be resolved before release."
     if result.high_count > 0:

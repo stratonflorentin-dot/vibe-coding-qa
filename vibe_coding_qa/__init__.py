@@ -80,6 +80,8 @@ class ScanResult:
     repo: Path
     modules: list[ModuleResult]
     tests: dict[str, Any] = field(default_factory=dict)
+    # Authoritative assessment from gates.assess()
+    _assessment: dict[str, Any] | None = field(default=None, repr=False)
 
     @property
     def findings(self) -> list[Finding]:
@@ -95,6 +97,8 @@ class ScanResult:
 
     @property
     def overall_score(self) -> float:
+        if self._assessment and "overall_score" in self._assessment:
+            return self._assessment["overall_score"]
         if not self.modules:
             return 0.0
         return round(sum(m.score for m in self.modules) / len(self.modules), 2)
@@ -107,8 +111,20 @@ class ScanResult:
             return True
         return any(m.status == Status.BLOCK for m in self.modules)
 
+    @property
+    def minimum_score(self) -> int:
+        if self._assessment and "minimum_score" in self._assessment:
+            return self._assessment["minimum_score"]
+        return 60
+
+    @property
+    def gate(self) -> str:
+        if self._assessment and "gate" in self._assessment:
+            return self._assessment["gate"]
+        return "unknown"
+
     def to_dict(self) -> dict[str, Any]:
-        return {
+        data = {
             "repo": str(self.repo),
             "overall_score": self.overall_score,
             "critical_count": self.critical_count,
@@ -117,3 +133,6 @@ class ScanResult:
             "tests": self.tests,
             "modules": [m.to_dict() for m in self.modules],
         }
+        if self._assessment:
+            data["assessment"] = self._assessment
+        return data

@@ -1,0 +1,8 @@
+fix: address all critical security issues from review
+
+1. AI review: Added secret redaction, opt-in for secret findings, excluded secrets by default
+2. GitHub token: Sanitized clone errors, use GIT_ASKPASS for credentials
+3. Release gate: Store authoritative assessment in ScanResult, use consistently for score/exit codes
+4. Test runner: Use shlex.split for proper quoting, added warning about project code execution
+5. Dependency scanner: Distinguish historical incidents from current vulnerabilities, version-aware advisories
+6. RLS scanner: Check ENABLE ROW LEVEL SECURITY independently from policy existence, detect policies without RLS enabled
