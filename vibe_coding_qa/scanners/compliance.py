@@ -3,7 +3,7 @@
 import re
 from pathlib import Path
 
-from . import BaseScanner
+from . import BaseScanner, load_ignore_patterns, is_ignored
 from vibe_coding_qa import Finding, Severity
 
 
@@ -11,16 +11,17 @@ class ComplianceScanner(BaseScanner):
     module = "compliance"
 
     def scan(self) -> list[Finding]:
-        self._scan_privacy_consent()
-        self._scan_unsubscribe()
-        self._scan_sms_opt_out()
-        self._scan_dpo_and_register()
+        ignore = load_ignore_patterns(self.repo)
+        self._scan_privacy_consent(ignore)
+        self._scan_unsubscribe(ignore)
+        self._scan_sms_opt_out(ignore)
+        self._scan_dpo_and_register(ignore)
         return self.findings
 
-    def _scan_privacy_consent(self) -> None:
+    def _scan_privacy_consent(self, ignore: list[str]) -> None:
         html_files = [
             p for p in (list(self.repo.rglob("*.html")) + list(self.repo.rglob("*.tsx")) + list(self.repo.rglob("*.jsx")) + list(self.repo.rglob("*.vue")) + list(self.repo.rglob("*.svelte")))
-            if "vcqa-reports" not in p.parts and "__pycache__" not in p.parts and ".git" not in p.parts and "node_modules" not in p.parts
+            if "vcqa-reports" not in p.parts and "__pycache__" not in p.parts and ".git" not in p.parts and "node_modules" not in p.parts and not is_ignored(p, self.repo, ignore)
         ]
         if not html_files:
             return
@@ -66,8 +67,10 @@ class ComplianceScanner(BaseScanner):
                 confidence="low",
             )
 
-    def _scan_unsubscribe(self) -> None:
+    def _scan_unsubscribe(self, ignore: list[str]) -> None:
         for path in self.iter_source_files((".ts", ".tsx", ".js", ".jsx", ".py")):
+            if is_ignored(path, self.repo, ignore):
+                continue
             text = path.read_text(encoding="utf-8", errors="ignore").lower()
             if "list-unsubscribe" in text or "unsubscribe" in text:
                 for i, raw in enumerate(text.splitlines(), 1):
@@ -104,8 +107,10 @@ class ComplianceScanner(BaseScanner):
             confidence="low",
         )
 
-    def _scan_sms_opt_out(self) -> None:
+    def _scan_sms_opt_out(self, ignore: list[str]) -> None:
         for path in self.iter_source_files((".ts", ".tsx", ".js", ".jsx", ".py")):
+            if is_ignored(path, self.repo, ignore):
+                continue
             text = path.read_text(encoding="utf-8", errors="ignore").lower()
             if "sms" in text or "notify africa" in text or "beem" in text:
                 if "stop" in text or "ondoa" in text:
@@ -130,8 +135,8 @@ class ComplianceScanner(BaseScanner):
                 )
                 return
 
-    def _scan_dpo_and_register(self) -> None:
-        md_files = list(self.repo.rglob("*.md"))
+    def _scan_dpo_and_register(self, ignore: list[str]) -> None:
+        md_files = [p for p in self.repo.rglob("*.md") if not is_ignored(p, self.repo, ignore)]
         has_dpo = False
         has_pdpc_register = False
         for path in md_files:

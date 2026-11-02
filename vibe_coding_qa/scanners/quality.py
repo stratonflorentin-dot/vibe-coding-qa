@@ -3,7 +3,7 @@
 import re
 from pathlib import Path
 
-from . import BaseScanner, is_likely_client_file, is_test_or_fixture
+from . import BaseScanner, load_ignore_patterns, is_ignored, is_likely_client_file, is_test_or_fixture
 from vibe_coding_qa import Finding, Severity
 
 
@@ -11,13 +11,16 @@ class QualityScanner(BaseScanner):
     module = "quality"
 
     def scan(self) -> list[Finding]:
+        ignore = load_ignore_patterns(self.repo)
         for path in self.iter_source_files((".ts", ".tsx", ".js", ".jsx", ".py")):
+            if is_ignored(path, self.repo, ignore):
+                continue
             self._scan_console_logs(path)
             self._scan_todos(path)
             self._scan_any_types(path)
             self._scan_missing_error_boundaries(path)
             self._scan_debugger_statements(path)
-        self._scan_build_config()
+        self._scan_build_config(ignore)
         return self.findings
 
     def _scan_console_logs(self, path: Path) -> None:
@@ -101,11 +104,13 @@ class QualityScanner(BaseScanner):
                     fixable=True,
                 )
 
-    def _scan_build_config(self) -> None:
+    def _scan_build_config(self, ignore: list[str]) -> None:
         vite = self.repo / "vite.config.ts"
         next_config = self.repo / "next.config.js"
         for path in (vite, next_config):
             if not path.is_file():
+                continue
+            if is_ignored(path, self.repo, ignore):
                 continue
             text = path.read_text(encoding="utf-8", errors="ignore")
             for i, raw in enumerate(text.splitlines(), 1):

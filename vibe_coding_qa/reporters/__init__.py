@@ -1,10 +1,16 @@
 """Report generators: Markdown, JSON, HTML."""
 
+import html
 import json
 from datetime import datetime, timezone
 from pathlib import Path
 
 from .. import ScanResult
+from ..gates import coverage_gaps
+
+
+def _h(text: str) -> str:
+    return html.escape(str(text))
 
 
 def markdown_report(result: ScanResult, title: str = "Vibe Coding QA Production Readiness Report") -> str:
@@ -27,13 +33,53 @@ def markdown_report(result: ScanResult, title: str = "Vibe Coding QA Production 
         lines.append(f"| {module.module} | {module.score} | {module.status.value} | {len(module.findings)} |")
     lines.append("")
 
+    arch = result.tests.get("architecture")
+    if arch:
+        lines.append("## Detected Technology Stack")
+        lines.append("")
+        lines.append(f"- **Languages:** {', '.join(f'{k} ({v})' for k, v in arch.get('languages', {}).items() if v)}")
+        lines.append(f"- **Frameworks:** {', '.join(arch.get('frameworks', [])) or 'none'}")
+        lines.append(f"- **Package manager:** {arch.get('package_manager', 'unknown')}")
+        lines.append(f"- **Databases:** {', '.join(arch.get('databases', [])) or 'none'}")
+        lines.append(f"- **Auth providers:** {', '.join(arch.get('auth_providers', [])) or 'none'}")
+        lines.append(f"- **Test runners:** {', '.join(arch.get('test_runners', [])) or 'none'}")
+        lines.append(f"- **Deployment:** {', '.join(arch.get('deployment', [])) or 'none'}")
+        lines.append("")
+
     if result.tests:
         lines.append("## Test Results")
         lines.append("")
         lines.append(f"- Status: `{result.tests.get('status', 'unknown')}`")
         lines.append(f"- Command: `{result.tests.get('command', 'N/A')}`")
+        if "duration_ms" in result.tests:
+            lines.append(f"- Duration: {result.tests['duration_ms']} ms")
+        if result.tests.get("skipped") is not None:
+            lines.append(f"- Skipped: {result.tests['skipped']}")
         if "summary" in result.tests:
             lines.append(f"- Summary: {result.tests['summary']}")
+        lines.append("")
+
+    fixes = result.tests.get("fixes")
+    if fixes:
+        lines.append("## Fixes")
+        lines.append("")
+        lines.append(f"- Mode: {'preview' if fixes.get('dry_run') else 'applied'}")
+        lines.append(f"- Applied: {len(fixes.get('applied', []))}")
+        lines.append(f"- Skipped: {len(fixes.get('skipped', []))}")
+        for a in fixes.get("applied", []):
+            lines.append(f"- `{a['finding']['rule']}` at `{a['finding']['file']}:{a['finding']['line']}`")
+            if a.get("diff"):
+                lines.append("  ```diff")
+                lines.extend(["  " + line for line in a["diff"].splitlines()])
+                lines.append("  ```")
+        lines.append("")
+
+    gaps = coverage_gaps(result)
+    if gaps:
+        lines.append("## Coverage Gaps and Limitations")
+        lines.append("")
+        for gap in gaps:
+            lines.append(f"- {gap}")
         lines.append("")
 
     lines.append("## Findings")
@@ -54,7 +100,9 @@ def markdown_report(result: ScanResult, title: str = "Vibe Coding QA Production 
 
 
 def json_report(result: ScanResult) -> str:
-    return json.dumps(result.to_dict(), indent=2)
+    data = result.to_dict()
+    data["coverage_gaps"] = coverage_gaps(result)
+    return json.dumps(data, indent=2)
 
 
 def html_report(result: ScanResult, title: str = "Vibe Coding QA Production Readiness Report") -> str:
@@ -62,24 +110,50 @@ def html_report(result: ScanResult, title: str = "Vibe Coding QA Production Read
     for f in sorted(result.findings, key=lambda x: (x.severity.value, x.module, str(x.file), x.line)):
         severity_class = f"severity-{f.severity.value}"
         rows += (
-            f"<tr class='{severity_class}'>"
-            f"<td>{f.severity.value.upper()}</td>"
-            f"<td>{f.module}</td>"
-            f"<td><code>{f.file}:{f.line}</code></td>"
-            f"<td>{f.message}</td>"
-            f"<td>{f.suggestion}</td>"
+            f"<tr class='{_h(severity_class)}'>"
+            f"<td>{_h(f.severity.value.upper())}</td>"
+            f"<td>{_h(f.module)}</td>"
+            f"<td><code>{_h(f.file)}:{f.line}</code></td>"
+            f"<td>{_h(f.message)}</td>"
+            f"<td>{_h(f.suggestion)}</td>"
             f"<td>{'yes' if f.fixable else 'no'}</td>"
             f"</tr>"
         )
     module_rows = ""
     for m in result.modules:
-        module_rows += f"<tr><td>{m.module}</td><td>{m.score}</td><td>{m.status.value}</td><td>{len(m.findings)}</td></tr>"
+        module_rows += f"<tr><td>{_h(m.module)}</td><td>{m.score}</td><td>{_h(m.status.value)}</td><td>{len(m.findings)}</td></tr>"
     status = "BLOCKED" if result.release_blocked else "OPEN"
+    arch = result.tests.get("architecture", {})
+    arch_html = ""
+    if arch:
+        arch_html = (
+            f"<h2>Detected Technology Stack</h2><ul>"
+            f"<li>Languages: {_h(', '.join(f'{k} ({v})' for k, v in arch.get('languages', {}).items() if v))}</li>"
+            f"<li>Frameworks: {_h(', '.join(arch.get('frameworks', [])))}</li>"
+            f"<li>Package manager: {_h(arch.get('package_manager', 'unknown'))}</li>"
+            f"<li>Databases: {_h(', '.join(arch.get('databases', [])))}</li>"
+            f"<li>Auth providers: {_h(', '.join(arch.get('auth_providers', [])))}</li>"
+            f"<li>Test runners: {_h(', '.join(arch.get('test_runners', [])))}</li>"
+            f"</ul>"
+        )
+    test_html = ""
+    if result.tests:
+        test_html = (
+            f"<h2>Test Results</h2><ul>"
+            f"<li>Status: {_h(result.tests.get('status', 'unknown'))}</li>"
+            f"<li>Command: <code>{_h(result.tests.get('command', 'N/A'))}</code></li>"
+            f"<li>Duration: {_h(result.tests.get('duration_ms', 'N/A'))} ms</li>"
+            f"</ul>"
+        )
+    gaps = coverage_gaps(result)
+    gaps_html = ""
+    if gaps:
+        gaps_html = "<h2>Coverage Gaps and Limitations</h2><ul>" + "".join(f"<li>{_h(g)}</li>" for g in gaps) + "</ul>"
     return f"""<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>{title}</title>
+<title>{_h(title)}</title>
 <style>
 body {{ font-family: system-ui, sans-serif; margin: 2rem; }}
 table {{ border-collapse: collapse; width: 100%; margin: 1rem 0; }}
@@ -93,16 +167,19 @@ th {{ background: #f3f3f3; }}
 </style>
 </head>
 <body>
-<h1>{title}</h1>
-<p><strong>Repository:</strong> <code>{result.repo}</code></p>
+<h1>{_h(title)}</h1>
+<p><strong>Repository:</strong> <code>{_h(result.repo)}</code></p>
 <p><strong>Generated:</strong> {datetime.now(timezone.utc).isoformat()}</p>
 <p><strong>Overall Score:</strong> {result.overall_score}/100</p>
 <p><strong>Release Gate:</strong> {status}</p>
+{arch_html}
 <h2>Module Summary</h2>
 <table>
 <thead><tr><th>Module</th><th>Score</th><th>Status</th><th>Findings</th></tr></thead>
 <tbody>{module_rows}</tbody>
 </table>
+{test_html}
+{gaps_html}
 <h2>Findings</h2>
 <table>
 <thead><tr><th>Severity</th><th>Module</th><th>Location</th><th>Message</th><th>Suggestion</th><th>Auto-fix</th></tr></thead>

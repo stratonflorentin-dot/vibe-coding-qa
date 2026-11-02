@@ -17,13 +17,14 @@ To add it to another project, copy the `vibe-coding-qa` folder into that project
 ## What it helps with
 
 - **Product intelligence:** research product ideas, markets, competitors, customer pain, feasibility, and MVP strategy before investing in a build.
-- **Engineering QA:** clone or point to a repo and scan actual source code for security, quality, database, infrastructure, performance, and compliance issues.
+- **Engineering QA:** clone or point to a repo and scan actual source code for security, quality, database, infrastructure, performance, compliance, and dependency/supply-chain issues.
 - **File-and-line findings:** every issue includes the file path and line number.
-- **Fixes:** preview or apply safe automated fixes (e.g. remove `console.log`, strip `debugger`).
-- **Tests:** run the project's own test suite as part of the gate.
-- **Release gate:** score the repo 0-100 and exit non-zero when critical findings remain.
+- **Fixes:** preview or apply safe automated fixes (e.g. remove `console.log`, strip `debugger`) with path validation, backups, diffs, and rollback.
+- **Tests:** run the project's own test suite as part of the gate; detect package manager and test scripts; refuse destructive commands.
+- **Release gate:** score the repo 0-100 with explainable deductions; deduplicate findings; configurable thresholds; coverage gaps reported.
 - **Framework guidance:** plan features, trust boundaries, authentication, RLS, secrets, input validation, CSRF, API abuse controls, TLS/headers, email/SMS flows, and Tanzania-focused privacy checks.
 - **External tools:** optionally integrate Fallow, REA, PentAGI, API Anything, and UI guidance.
+- **AI-assisted review (optional):** provider-agnostic interface for OpenRouter/Groq-compatible APIs; reads credentials from environment; core works without it.
 
 ## What to expect
 
@@ -43,6 +44,9 @@ python -m vibe_coding_qa.cli scan --repo stratonflorentin-dot/vibe-coding-qa --o
 # Skip running the project test suite
 python -m vibe_coding_qa.cli scan --repo /path/to/project --no-tests --output vcqa-reports
 
+# Static analysis only (no test execution)
+python -m vibe_coding_qa.cli scan --repo /path/to/project --no-execution --output vcqa-reports
+
 # Preview safe fixes
 python -m vibe_coding_qa.cli fix --repo /path/to/project --output vcqa-reports
 
@@ -51,6 +55,9 @@ python -m vibe_coding_qa.cli fix --repo /path/to/project --apply --output vcqa-r
 
 # Release gate only (exit 2 if blocked)
 python -m vibe_coding_qa.cli gate --repo /path/to/project --output vcqa-reports
+
+# Static gate only (no test execution)
+python -m vibe_coding_qa.cli gate --repo /path/to/project --no-execution --output vcqa-reports
 ```
 
 Reports are written as `vcqa-report.md`, `vcqa-report.json`, and `vcqa-report.html` in the output directory.
@@ -59,12 +66,13 @@ Reports are written as `vcqa-report.md`, `vcqa-report.json`, and `vcqa-report.ht
 
 | Module | Examples |
 |--------|----------|
-| **Security** | exposed secrets, client-side API keys, `.env` files, insecure eval, wildcard CORS, SQL injection patterns |
-| **Quality** | `console.log`, `debugger`, `TODO/FIXME`, `any` types, missing error boundaries |
-| **Database** | missing RLS, weak RLS policies, editable role fields, client-side role updates, Supabase query auth review |
-| **Infrastructure** | weak TLS, missing HSTS/CSP/X-Frame-Options, Docker `latest` tags |
+| **Security** | exposed secrets, client-side API keys, `.env` files, insecure eval, wildcard CORS, SQL injection patterns, unvalidated file uploads, path traversal, SSRF, insecure cookies, debug endpoints, shell execution, rate limits, session secrets, Firebase rules |
+| **Quality** | `console.log`, `debugger`, `TODO/FIXME`, `any` types, missing error boundaries, source maps in production |
+| **Database** | missing RLS, weak RLS policies, editable role fields, client-side role updates, Supabase query auth review, Prisma RLS review |
+| **Infrastructure** | weak TLS, missing HSTS/CSP/X-Frame-Options, Docker `latest` tags, root user in containers, exposed ports |
 | **Performance** | blocking handlers, large images, large source files |
 | **Compliance** | Tanzania PDPA consent checkboxes, RFC 8058 unsubscribe, TCRA SMS opt-out, DPO/PDPC documentation |
+| **Dependencies** | outdated/vulnerable packages, missing lockfiles, CI workflow risks (pull_request_target, outdated checkout, secrets in PRs), Docker risks, license hints |
 
 The engine returns a weighted 0-100 score and blocks release when critical findings or failing tests remain.
 
@@ -74,6 +82,46 @@ The engine returns a weighted 0-100 score and blocks release when critical findi
 - Pattern-based detection produces false positives and false negatives; treat every finding as a review prompt, not a certification.
 - Secret detection skips test/fixture files to reduce noise; manually review those files.
 - Compliance checks are heuristics, not legal advice; confirm requirements with official sources and qualified specialists.
+- Dependency checks do not query external vulnerability databases; they rely on local lockfiles and known patterns.
+
+## Configuration
+
+Create a `.vcqaignore` file in the repository root to exclude paths from scanning (one pattern per line, supports globs and directory names):
+
+```
+# Example .vcqaignore
+dist/
+build/
+*.generated.ts
+vendor/
+```
+
+Set environment variables for optional AI review:
+
+```bash
+export VCQA_AI_PROVIDER=openrouter
+export VCQA_AI_API_KEY=your-key
+export VCQA_AI_BASE_URL=https://openrouter.ai/api/v1
+export VCQA_AI_MODEL=openai/gpt-3.5-turbo
+```
+
+Configure the release gate minimum score:
+
+```bash
+export VCQA_MINIMUM_SCORE=70
+```
+
+## Reports
+
+Reports include:
+- **Technology stack** (languages, frameworks, package manager, databases, auth providers, test runners, deployment targets)
+- **Test results** (status, command, duration, skipped count)
+- **Fixes** (applied/skipped with diffs in preview mode)
+- **Coverage gaps** (missing tests, lockfiles, auth, CI, .gitignore)
+- **Findings** grouped by severity with file/line, message, suggestion, confidence, and auto-fixability
+- **Score explanation** with per-finding penalty breakdown
+
+Formats: Markdown (`vcqa-report.md`), JSON (`vcqa-report.json`), HTML (`vcqa-report.html` with escaped content).
 
 ## Existing Skill CLI
 

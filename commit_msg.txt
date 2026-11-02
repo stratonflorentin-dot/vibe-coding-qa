@@ -1,0 +1,13 @@
+feat: upgrade Vibe Coding QA to production-ready AI code auditor
+
+- Added application architecture/profile analyzer (profile.py)
+- Expanded security scanner: uploads, path traversal, SSRF, cookies, debug endpoints, shell exec, Firebase rules, rate limits, session secrets
+- Added dependency/supply-chain scanner (dependencies.py): lockfile consistency, CI workflow risks, Docker risks, outdated packages
+- Improved test runner: package manager detection, destructive command refusal, no-execution mode, duration/skipped tracking
+- Safer fix engine: path validation, .vcqa-backups, diffs, rollback, fix classification
+- Upgraded release gate: deduplication, explainable scoring with confidence/exploitability multipliers, configurable thresholds, coverage gaps
+- Enhanced reports: tech stack, test results, fixes with diffs, coverage gaps, HTML escaping
+- Added optional AI review provider interface (ai_review.py): OpenRouter/Groq-compatible, env-based credentials
+- Added .vcqaignore support for excluding paths
+- Added regression tests for new scanners, fix safety, path traversal, report escaping
+- Updated README with new commands, configuration, and report details

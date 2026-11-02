@@ -21,6 +21,7 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument("--repo", required=True, help="Local path or GitHub owner/repo (or full git URL).")
     scan.add_argument("--output", "-o", default="vcqa-reports", help="Directory for Markdown/JSON/HTML reports.")
     scan.add_argument("--no-tests", action="store_true", help="Skip running the project test suite.")
+    scan.add_argument("--no-execution", action="store_true", help="Run static analysis only; do not execute project tests.")
     scan.add_argument("--test-command", help="Override the test command (e.g. 'npm run test:ci').")
     scan.add_argument("--github-token", help="Token for private GitHub repositories.")
     scan.add_argument("--keep-clone", action="store_true", help="Keep the temporary cloned repository.")
@@ -34,6 +35,7 @@ def build_parser() -> argparse.ArgumentParser:
     gate = sub.add_parser("gate", help="Return a release gate decision and exit non-zero when blocked.")
     gate.add_argument("--repo", required=True, help="Local path or GitHub owner/repo.")
     gate.add_argument("--output", "-o", default="vcqa-reports", help="Directory for reports.")
+    gate.add_argument("--no-execution", action="store_true", help="Static gate only; do not execute tests.")
     gate.add_argument("--github-token", help="Token for private GitHub repositories.")
 
     return parser
@@ -48,6 +50,7 @@ def main(argv: list[str] | None = None) -> int:
             args.repo,
             output_dir=args.output,
             run_tests_flag=not args.no_tests,
+            no_execution=args.no_execution,
             test_command=args.test_command,
             github_token=args.github_token,
             keep_clone=args.keep_clone,
@@ -75,6 +78,7 @@ def main(argv: list[str] | None = None) -> int:
             args.repo,
             output_dir=args.output,
             run_tests_flag=False,
+            no_execution=args.no_execution,
             github_token=args.github_token,
         )
         print(release_decision(result))

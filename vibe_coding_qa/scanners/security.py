@@ -3,7 +3,7 @@
 import re
 from pathlib import Path
 
-from . import BaseScanner, SECRET_PATTERNS, SQL_INJECTION_HINTS, is_likely_client_file, is_test_or_fixture, normalize_line
+from . import BaseScanner, SECRET_PATTERNS, SQL_INJECTION_HINTS, is_ignored, is_likely_client_file, is_test_or_fixture, load_ignore_patterns, normalize_line
 from vibe_coding_qa import Finding, Severity
 
 
@@ -22,8 +22,17 @@ class SecurityScanner(BaseScanner):
             self._scan_for_insecure_cors(path)
             self._scan_for_missing_auth(path)
             self._scan_for_sql_injection(path)
+            self._scan_for_insecure_uploads(path)
+            self._scan_for_path_traversal(path)
+            self._scan_for_ssrf(path)
+            self._scan_for_insecure_cookies(path)
+            self._scan_for_debug_endpoints(path)
+            self._scan_for_shell_exec(path)
+            self._scan_for_rate_limits(path)
+            self._scan_for_insecure_sessions(path)
         self._scan_supabase_rls()
         self._scan_env_files()
+        self._scan_firebase_rules()
         return self.findings
 
     def _scan_for_secrets(self, path: Path) -> None:
@@ -146,7 +155,8 @@ class SecurityScanner(BaseScanner):
                         break
 
     def _scan_supabase_rls(self) -> None:
-        sql_files = list(self.repo.rglob("*.sql"))
+        ignore = load_ignore_patterns(self.repo)
+        sql_files = [p for p in self.repo.rglob("*.sql") if not is_ignored(p, self.repo, ignore)]
         if not sql_files and not (self.repo / "supabase").is_dir():
             return
         rls_enabled_tables: set[str] = set()
@@ -179,7 +189,10 @@ class SecurityScanner(BaseScanner):
                 )
 
     def _scan_env_files(self) -> None:
+        ignore = load_ignore_patterns(self.repo)
         for path in self.repo.rglob(".env*"):
+            if is_ignored(path, self.repo, ignore):
+                continue
             if path.name == ".env.example":
                 continue
             self.add(
@@ -191,3 +204,171 @@ class SecurityScanner(BaseScanner):
                 suggestion="Remove the file from git, add it to .gitignore, and rotate any exposed secrets.",
                 confidence="high",
             )
+
+    def _scan_for_insecure_uploads(self, path: Path) -> None:
+        if path.suffix not in {".ts", ".js", ".py"}:
+            return
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        for i, raw in enumerate(text.splitlines(), 1):
+            if re.search(r"(multer|upload|busboy|formidable|receive|save).*?file", raw, re.IGNORECASE):
+                if not re.search(r"(mimetype|extension|magic|size|limit|validate|sanitize)", raw, re.IGNORECASE):
+                    self.add(
+                        rule="unvalidated-file-upload",
+                        severity=Severity.HIGH,
+                        file=path,
+                        line=i,
+                        message="File upload handler may not validate file type or size.",
+                        suggestion="Validate MIME type, extension, and size; store uploads outside the web root and scan for malware.",
+                        confidence="low",
+                    )
+
+    def _scan_for_path_traversal(self, path: Path) -> None:
+        if path.suffix not in {".ts", ".js", ".py"}:
+            return
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        risky = [
+            r"(readFileSync|writeFileSync|sendFile|createReadStream|open)\s*\(\s*[^)]*(req\.|request\.|params|query|body)",
+            r"path\.join\s*\(\s*__dirname\s*,\s*[^)]*(req\.|request\.|params|query|body)",
+            r"open\s*\(\s*[^)]*(req\.|request\.|params|query|body)",
+        ]
+        for i, raw in enumerate(text.splitlines(), 1):
+            for pattern in risky:
+                if re.search(pattern, raw, re.IGNORECASE):
+                    self.add(
+                        rule="path-traversal-risk",
+                        severity=Severity.HIGH,
+                        file=path,
+                        line=i,
+                        message="File-system access appears to use user-controlled path components.",
+                        suggestion="Resolve the path, enforce an allowlist directory, and reject traversal sequences.",
+                        confidence="low",
+                    )
+                    break
+
+    def _scan_for_ssrf(self, path: Path) -> None:
+        if path.suffix not in {".ts", ".js", ".py"}:
+            return
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        for i, raw in enumerate(text.splitlines(), 1):
+            if re.search(r"(fetch|axios|request|curl|urllib|http\.get)\s*\(\s*(req\.|request\.|params|query|body)", raw, re.IGNORECASE):
+                self.add(
+                    rule="ssrf-risk",
+                    severity=Severity.HIGH,
+                    file=path,
+                    line=i,
+                    message="Outgoing request URL may be controlled by user input, creating SSRF risk.",
+                    suggestion="Use an allowlist of permitted URLs/hosts and never forward raw user input to backend requests.",
+                    confidence="low",
+                )
+
+    def _scan_for_insecure_cookies(self, path: Path) -> None:
+        if path.suffix not in {".ts", ".js", ".py"}:
+            return
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        for i, raw in enumerate(text.splitlines(), 1):
+            if re.search(r"res\.cookie\s*\(|set-cookie|cookie\s*\(", raw, re.IGNORECASE):
+                lowered = raw.lower()
+                if "secure" not in lowered or "httponly" not in lowered or "samesite" not in lowered:
+                    self.add(
+                        rule="insecure-cookie-settings",
+                        severity=Severity.MEDIUM,
+                        file=path,
+                        line=i,
+                        message="Cookie/session setter is missing Secure, HttpOnly, or SameSite attributes.",
+                        suggestion="Set Secure, HttpOnly, and SameSite=Strict/Lax on session cookies.",
+                        confidence="low",
+                    )
+
+    def _scan_for_debug_endpoints(self, path: Path) -> None:
+        if path.suffix not in {".ts", ".js", ".py"}:
+            return
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        for i, raw in enumerate(text.splitlines(), 1):
+            if re.search(r"['\"](/debug(?:/[^'\"]*)?|/env(?:/[^'\"]*)?|/config(?:/[^'\"]*)?|/internal(?:/[^'\"]*)?|/admin(?:/[^'\"]*)?|/trace(?:/[^'\"]*)?)['\"]", raw, re.IGNORECASE):
+                if not re.search(r"auth|verify|admin|require", raw, re.IGNORECASE):
+                    self.add(
+                        rule="exposed-debug-endpoint",
+                        severity=Severity.MEDIUM,
+                        file=path,
+                        line=i,
+                        message="Endpoint path looks like a debug/internal route without obvious protection.",
+                        suggestion="Protect debug endpoints with authentication, IP allowlists, or disable them in production.",
+                        confidence="low",
+                    )
+
+    def _scan_for_shell_exec(self, path: Path) -> None:
+        if path.suffix not in {".ts", ".js", ".py"}:
+            return
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        for i, raw in enumerate(text.splitlines(), 1):
+            if re.search(r"(?:^|[^a-zA-Z0-9_.])(exec|execSync|execFile|spawn|child_process|subprocess\.call|os\.system)\s*\(", raw, re.IGNORECASE):
+                if re.search(r"(req\.|request\.|params|query|body)", raw, re.IGNORECASE):
+                    self.add(
+                        rule="unsafe-shell-execution",
+                        severity=Severity.CRITICAL,
+                        file=path,
+                        line=i,
+                        message="Shell command appears to execute user-controlled input.",
+                        suggestion="Never pass user input to shell commands; use parameterized APIs or explicit allowlists.",
+                        confidence="medium",
+                    )
+
+    def _scan_for_rate_limits(self, path: Path) -> None:
+        if path.suffix not in {".ts", ".js", ".py"}:
+            return
+        if not any(part in self.SERVER_PATHS for part in {p.lower() for p in path.parts}):
+            return
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        has_rate_limit = bool(re.search(r"(rate.?limit|throttle|slow.?down|@limiter)", text, re.IGNORECASE))
+        if has_rate_limit:
+            return
+        for i, raw in enumerate(text.splitlines(), 1):
+            if re.search(r"\.(post|put|delete|patch)\s*\(\s*['\"](login|signin|auth|register|password|reset|api/)", raw, re.IGNORECASE):
+                self.add(
+                    rule="missing-rate-limit",
+                    severity=Severity.MEDIUM,
+                    file=path,
+                    line=i,
+                    message="Sensitive endpoint does not appear to have rate limiting.",
+                    suggestion="Add rate limiting to authentication and password-reset endpoints.",
+                    confidence="low",
+                )
+                break
+
+    def _scan_for_insecure_sessions(self, path: Path) -> None:
+        if path.suffix not in {".ts", ".js", ".py"}:
+            return
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        for i, raw in enumerate(text.splitlines(), 1):
+            if re.search(r"session\s*\(\s*\{|express-session|cookie-session", raw, re.IGNORECASE):
+                lowered = raw.lower()
+                if "secret" in lowered and ("process.env" not in lowered and "os.environ" not in lowered and "SECRET" not in raw):
+                    self.add(
+                        rule="session-secret-hardcoded",
+                        severity=Severity.HIGH,
+                        file=path,
+                        line=i,
+                        message="Session secret may be hardcoded.",
+                        suggestion="Load session secrets from environment variables or a vault.",
+                        confidence="low",
+                    )
+
+    def _scan_firebase_rules(self) -> None:
+        ignore = load_ignore_patterns(self.repo)
+        for path in self.repo.rglob("*.rules"):
+            if is_ignored(path, self.repo, ignore):
+                continue
+            if "firebase" not in path.name.lower():
+                continue
+            text = path.read_text(encoding="utf-8", errors="ignore")
+            lowered = text.lower()
+            if '".read": true' in lowered or '".write": true' in lowered or "$uid == null" in lowered or "auth == null" in lowered:
+                self.add(
+                    rule="firebase-insecure-rules",
+                    severity=Severity.CRITICAL,
+                    file=path,
+                    line=1,
+                    message="Firebase rules appear to allow unauthenticated read or write access.",
+                    suggestion="Require auth.uid() != null in rules and validate ownership conditions.",
+                    confidence="medium",
+                )

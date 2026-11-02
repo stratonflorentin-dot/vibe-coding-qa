@@ -1,5 +1,6 @@
 """Base scanner utilities and shared helpers."""
 
+import fnmatch
 import re
 from pathlib import Path
 
@@ -61,7 +62,48 @@ class BaseScanner:
         files = []
         for ext in extensions:
             files.extend(self.repo.rglob(f"*{ext}"))
-        return [p for p in files if "node_modules" not in p.parts and ".git" not in p.parts and "__pycache__" not in p.parts and not p.name.endswith(".d.ts")]
+        ignore = load_ignore_patterns(self.repo)
+        return [
+            p for p in files
+            if "node_modules" not in p.parts
+            and ".git" not in p.parts
+            and "__pycache__" not in p.parts
+            and not p.name.endswith(".d.ts")
+            and not is_ignored(p, self.repo, ignore)
+        ]
+
+
+def load_ignore_patterns(repo: Path) -> list[str]:
+    patterns: list[str] = []
+    ignore_file = repo / ".vcqaignore"
+    if ignore_file.is_file():
+        for line in ignore_file.read_text(encoding="utf-8", errors="ignore").splitlines():
+            line = line.strip()
+            if line and not line.startswith("#"):
+                patterns.append(line)
+    return patterns
+
+
+def is_ignored(path: Path, repo: Path, patterns: list[str] | None = None) -> bool:
+    if patterns is None:
+        patterns = load_ignore_patterns(repo)
+    try:
+        rel = path.relative_to(repo).as_posix()
+    except ValueError:
+        return False
+    parts = Path(rel).parts
+    for pattern in patterns:
+        pat = pattern.rstrip("/")
+        # Match exact file or directory name anywhere in the path.
+        if pat in parts:
+            return True
+        # Match full relative path or glob.
+        if fnmatch.fnmatch(rel, pattern) or fnmatch.fnmatch(rel, f"**/{pattern}"):
+            return True
+        # Match directory prefix.
+        if rel.startswith(pat + "/"):
+            return True
+    return False
 
 
 def normalize_line(text: str) -> str:

@@ -3,7 +3,7 @@
 import re
 from pathlib import Path
 
-from . import BaseScanner, normalize_line
+from . import BaseScanner, load_ignore_patterns, is_ignored, normalize_line
 from vibe_coding_qa import Finding, Severity
 
 
@@ -11,7 +11,8 @@ class DatabaseScanner(BaseScanner):
     module = "database"
 
     def scan(self) -> list[Finding]:
-        sql_files = list(self.repo.rglob("*.sql"))
+        ignore = load_ignore_patterns(self.repo)
+        sql_files = [p for p in self.repo.rglob("*.sql") if not is_ignored(p, self.repo, ignore)]
         for path in sql_files:
             self._scan_sql(path)
         for path in self.iter_source_files((".ts", ".tsx", ".js", ".jsx", ".py", ".prisma")):

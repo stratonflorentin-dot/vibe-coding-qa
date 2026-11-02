@@ -3,7 +3,7 @@
 import re
 from pathlib import Path
 
-from . import BaseScanner, is_likely_client_file
+from . import BaseScanner, load_ignore_patterns, is_ignored, is_likely_client_file
 from vibe_coding_qa import Finding, Severity
 
 
@@ -13,12 +13,17 @@ class PerformanceScanner(BaseScanner):
     LARGE_IMAGE_BYTES = 500_000
 
     def scan(self) -> list[Finding]:
+        ignore = load_ignore_patterns(self.repo)
         for path in self.iter_source_files((".ts", ".tsx", ".js", ".jsx", ".py")):
+            if is_ignored(path, self.repo, ignore):
+                continue
             self._scan_source(path)
         for path in self.repo.rglob("*"):
             if not path.is_file():
                 continue
             if "node_modules" in path.parts or ".git" in path.parts:
+                continue
+            if is_ignored(path, self.repo, ignore):
                 continue
             self._scan_asset(path)
         return self.findings
