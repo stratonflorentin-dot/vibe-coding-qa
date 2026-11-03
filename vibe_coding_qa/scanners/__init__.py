@@ -15,7 +15,7 @@ SECRET_PATTERNS = [
     ("openai-key", re.compile(r"sk-[a-zA-Z0-9]{20,}", re.IGNORECASE), Severity.CRITICAL),
     ("stripe-key", re.compile(r"sk_(live|test)_[0-9a-zA-Z]{24,}", re.IGNORECASE), Severity.CRITICAL),
     ("password-in-code", re.compile(r"password\s*[:=]\s*['\"][^'\"]{4,}['\"]", re.IGNORECASE), Severity.HIGH),
-    ("url-with-credentials", re.compile(r"https?://[^:]+:[^@]+@[^\s\"']+", re.IGNORECASE), Severity.HIGH),
+    ("url-with-credentials", re.compile(r"https?://[^\s:/\"']+:[^\s@/\"']+@[^\s\"']+", re.IGNORECASE), Severity.HIGH),
     # Additional secret patterns for better coverage
     ("jwt-token", re.compile(r"eyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]*\.[A-Za-z0-9_-]*"), Severity.CRITICAL),
     ("bearer-token", re.compile(r"(?i)bearer\s+[A-Za-z0-9_\-]{20,}"), Severity.HIGH),

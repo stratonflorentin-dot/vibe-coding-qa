@@ -20,6 +20,7 @@ from vibe_coding_qa.gates import assess, release_decision
 from vibe_coding_qa.reporters import html_report, json_report, markdown_report
 from vibe_coding_qa.scanners.dependencies import DependencyScanner
 from vibe_coding_qa.repo import clone_repo
+from vibe_coding_qa.scanners import redact_secrets
 from vibe_coding_qa.cli import main as cli_main
 
 
@@ -360,12 +361,16 @@ class TestRunnerTests(TestCase):
             (repo / ".env").write_text("TOKEN=developer-secret\n", encoding="utf-8")
             (repo / "source.py").write_text('password = "embedded-secret-password"\n', encoding="utf-8")
             (repo / "app.py").write_text("print('test')\n", encoding="utf-8")
+            (repo / "tests").mkdir()
+            fixture_source = 'const API_KEY = "sample-key-not-real";\n'
+            (repo / "tests" / "test_fixture.py").write_text(fixture_source, encoding="utf-8")
 
             def capture(command, **kwargs):
                 captured["command"] = command
                 snapshot = kwargs["cwd"]
                 captured["files"] = [path.relative_to(snapshot).as_posix() for path in snapshot.rglob("*") if path.is_file()]
                 captured["source"] = (snapshot / "source.py").read_text(encoding="utf-8")
+                captured["test_source"] = (snapshot / "tests" / "test_fixture.py").read_text(encoding="utf-8")
                 captured["environment"] = kwargs["env"]
                 return subprocess.CompletedProcess(command, 0, 'password="embedded-secret-password"\n', ""), False, False
 
@@ -378,6 +383,7 @@ class TestRunnerTests(TestCase):
 
             self.assertNotIn(".env", captured["files"])
             self.assertNotIn("embedded-secret-password", captured["source"])
+            self.assertEqual(captured["test_source"], fixture_source)
             self.assertNotIn("VCQA_TEST_SECRET", captured["environment"])
             self.assertNotIn("host-secret-value", str(captured["environment"]))
             self.assertNotIn("embedded-secret-password", result["stdout"])
@@ -526,6 +532,19 @@ class ReportTests(TestCase):
 
 
 class AIProviderTests(TestCase):
+    def test_secret_redaction_does_not_cross_source_boundaries(self):
+        source = (
+            'base_url="https://example.invalid"\\n'
+            'masked="https://***:***@"\\n'
+            'credential="https://audit-user:secret-value@example.invalid/path"\\n'
+            'next="ordinary source"'
+        )
+        redacted = redact_secrets(source)
+        self.assertIn('base_url="https://example.invalid"', redacted)
+        self.assertIn('masked="https://***:***@"', redacted)
+        self.assertNotIn("secret-value", redacted)
+        self.assertIn('next="ordinary source"', redacted)
+
     def test_ai_request_payload_redacts_complete_pem_and_finding_fields(self):
         provider = OpenRouterAIProvider(api_key="fake", base_url="https://example.invalid")
         finding = Finding(

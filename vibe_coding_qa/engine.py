@@ -165,6 +165,14 @@ def _copy_test_snapshot(repo: Path) -> tuple[Path, Path]:
             except ValueError:
                 continue
             try:
+                relative_parts = source_file.relative_to(source).parts[:-1]
+                is_test_fixture = any(
+                    part.lower() in {"test", "tests", "fixture", "fixtures", "__fixtures__", "sample", "samples"}
+                    for part in relative_parts
+                )
+                if is_test_fixture:
+                    shutil.copyfile(source_file, target_dir / name)
+                    continue
                 content = source_file.read_bytes()
                 try:
                     text = content.decode("utf-8")
