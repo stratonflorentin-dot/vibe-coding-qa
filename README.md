@@ -20,8 +20,8 @@ To add it to another project, copy the `vibe-coding-qa` folder into that project
 - **Engineering QA:** clone or point to a repo and scan actual source code for security, quality, database, infrastructure, performance, compliance, and dependency/supply-chain issues.
 - **File-and-line findings:** every issue includes the file path and line number.
 - **Fixes:** preview or apply safe automated fixes (e.g. remove `console.log`, strip `debugger`) with path validation, backups, diffs, and rollback.
-- **Tests:** run the project's own test suite as part of the gate; detect package manager and test scripts; refuse destructive commands.
-- **Release gate:** score the repo 0-100 with explainable deductions; deduplicate findings; configurable thresholds; coverage gaps reported.
+- **Tests:** detects npm scripts, pytest, and standard-library unittest; execution requires `--explicit-permission` and an available Docker daemon plus a local image. Tests run from a temporary secret-filtered snapshot with networking disabled, read-only root filesystem, memory/CPU/PID limits, and a timeout; images are never pulled automatically.
+- **Release gate:** score the repo 0-100 with explainable deductions; deduplicate findings; configurable thresholds; reports one of `PASS`, `FAIL`, `BLOCKED`, or `NOT VERIFIED`.
 - **Framework guidance:** plan features, trust boundaries, authentication, RLS, secrets, input validation, CSRF, API abuse controls, TLS/headers, email/SMS flows, and Tanzania-focused privacy checks.
 - **External tools:** optionally integrate Fallow, REA, PentAGI, API Anything, and UI guidance.
 - **AI-assisted review (optional):** provider-agnostic interface for OpenRouter/Groq-compatible APIs; reads credentials from environment; core works without it.
@@ -32,7 +32,7 @@ It won’t do everything automatically: external tools must be installed and con
 
 ## Automated QA Engine
 
-The new Python engine turns the framework into an actual production-readiness tool. It runs entirely with the Python standard library (no install step beyond Python and `git`).
+The scanner uses only the Python standard library (and Git for repository cloning). Test execution additionally requires a running Docker daemon and a locally available image; the CLI never pulls images or installs project dependencies.
 
 ```bash
 # Scan a local repository
@@ -41,10 +41,10 @@ python -m vibe_coding_qa.cli scan --repo /path/to/project --output vcqa-reports
 # Scan a public GitHub repository
 python -m vibe_coding_qa.cli scan --repo stratonflorentin-dot/vibe-coding-qa --output vcqa-reports
 
-# Skip running the project test suite
-python -m vibe_coding_qa.cli scan --repo /path/to/project --no-tests --output vcqa-reports
+# Run detected tests (project scripts execute code; this explicit flag is required)
+python -m vibe_coding_qa.cli scan --repo /path/to/project --explicit-permission --output vcqa-reports
 
-# Static analysis only (no test execution)
+# Static analysis only (test execution is skipped and decision is NOT VERIFIED)
 python -m vibe_coding_qa.cli scan --repo /path/to/project --no-execution --output vcqa-reports
 
 # Preview safe fixes
@@ -53,14 +53,14 @@ python -m vibe_coding_qa.cli fix --repo /path/to/project --output vcqa-reports
 # Apply safe fixes (review the report first)
 python -m vibe_coding_qa.cli fix --repo /path/to/project --apply --output vcqa-reports
 
-# Release gate only (exit 2 if blocked)
-python -m vibe_coding_qa.cli gate --repo /path/to/project --output vcqa-reports
+# Run a release gate with explicit test permission
+python -m vibe_coding_qa.cli gate --repo /path/to/project --explicit-permission --test-timeout 300 --max-memory-mb 512 --max-cpu-seconds 60 --output vcqa-reports
 
-# Static gate only (no test execution)
+# Static-only gate; decision is NOT VERIFIED, not PASS
 python -m vibe_coding_qa.cli gate --repo /path/to/project --no-execution --output vcqa-reports
 ```
 
-Reports are written as `vcqa-report.md`, `vcqa-report.json`, and `vcqa-report.html` in the output directory.
+Reports are written as `vcqa-report.md`, `vcqa-report.json`, and `vcqa-report.html` in the output directory. For private GitHub repositories, set `VCQA_GITHUB_TOKEN` (or `GITHUB_TOKEN`) in the environment; the CLI intentionally accepts no token argument to avoid process-list exposure. Credentials are used through a temporary Git credential store and removed after cloning.
 
 ### What the engine checks
 
@@ -74,15 +74,18 @@ Reports are written as `vcqa-report.md`, `vcqa-report.json`, and `vcqa-report.ht
 | **Compliance** | Tanzania PDPA consent checkboxes, RFC 8058 unsubscribe, TCRA SMS opt-out, DPO/PDPC documentation |
 | **Dependencies** | outdated/vulnerable packages, missing lockfiles, CI workflow risks (pull_request_target, outdated checkout, secrets in PRs), Docker risks, license hints |
 
-The engine returns a weighted 0-100 score and blocks release when critical findings or failing tests remain.
+The gate uses the same stored assessment in CLI output and Markdown/JSON/HTML reports. `PASS` means all configured criteria and tests passed; `FAIL` means a non-critical threshold or test failed; `BLOCKED` means a critical finding remains; and `NOT VERIFIED` means tests were skipped, unavailable, or not executed. Exit codes are `0` pass, `1` fail, `2` blocked, and `3` not verified.
+
+The engine returns a weighted 0-100 score and never treats skipped test execution as a successful verification.
 
 ### Limitations
 
 - Static analysis only: it cannot prove runtime behavior, access control bypasses, or business-logic bugs.
 - Pattern-based detection produces false positives and false negatives; treat every finding as a review prompt, not a certification.
+- Test execution is opt-in and requires Docker. The engine runs a temporary copy with common secret files removed and detected credentials redacted, no network, a read-only root filesystem, memory/CPU/PID limits, a wall-clock timeout, and a bounded output capture. It does not mount the original repository or inherit developer environment variables. Container isolation is not a proof against all kernel/runtime vulnerabilities; tests remain unverified if the daemon or image is unavailable. Make the selected image available before the audit (default images are `python:3.12-slim` and `node:22-bookworm-slim`), or set `--test-image`; the CLI does not pull images or install project dependencies.
+- Dependency checks use local package metadata and conservative historical heuristics by default. Optional OSV lookup is explicit and offline by default. It resolves npm `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`, Python `poetry.lock`, `uv.lock`, `Pipfile.lock`, and exactly pinned `requirements.txt` dependencies; npm transitive lock entries are included. Results are queried by exact package version, capped at 250 dependencies, and report the OSV advisory source; other lockfile formats and unresolved version ranges remain outside coverage.
 - Secret detection skips test/fixture files to reduce noise; manually review those files.
 - Compliance checks are heuristics, not legal advice; confirm requirements with official sources and qualified specialists.
-- Dependency checks do not query external vulnerability databases; they rely on local lockfiles and known patterns.
 
 ## Configuration
 
@@ -105,11 +108,11 @@ export VCQA_AI_BASE_URL=https://openrouter.ai/api/v1
 export VCQA_AI_MODEL=openai/gpt-3.5-turbo
 ```
 
-Configure the release gate minimum score:
+AI review is optional. The default request contains finding metadata only; source snippets are not read unless `VCQA_AI_INCLUDE_SOURCE=1` is explicitly set. Secret-related findings are excluded unless `VCQA_AI_INCLUDE_SECRETS=1`; any opted-in content is redacted before transmission, but review the provider and data handling before enabling sharing.
 
-```bash
-export VCQA_MINIMUM_SCORE=70
-```
+Optional OSV online lookup is disabled by default. Enable it with `VCQA_OSV_ENABLED=1`; network failures are reported as incomplete scanner notes, and static/local scanning remains available offline.
+
+Configure the release gate minimum score with `VCQA_MINIMUM_SCORE` (for example, `70`). On Windows Command Prompt, use `set VCQA_MINIMUM_SCORE=70`; in PowerShell, use `$env:VCQA_MINIMUM_SCORE = '70'`.
 
 ## Reports
 

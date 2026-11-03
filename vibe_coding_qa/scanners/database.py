@@ -13,32 +13,123 @@ class DatabaseScanner(BaseScanner):
     def scan(self) -> list[Finding]:
         ignore = load_ignore_patterns(self.repo)
         sql_files = [p for p in self.repo.rglob("*.sql") if not is_ignored(p, self.repo, ignore)]
+        sql_files.sort(key=lambda path: path.as_posix().lower())
+        self.tables: dict[str, tuple[Path, int]] = {}
+        self.rls_tables: set[str] = set()
+        self.policies: dict[str, list[tuple[Path, int, str, str]]] = {}
         for path in sql_files:
             self._scan_sql(path)
+        self._check_rls_state()
         for path in self.iter_source_files((".ts", ".tsx", ".js", ".jsx", ".py", ".prisma")):
             self._scan_orm(path)
         return self.findings
 
+    @staticmethod
+    def _statements(text: str):
+        pending: list[str] = []
+        start_line = 1
+        for line_number, raw in enumerate(text.splitlines(), 1):
+            if raw.lstrip().startswith("--"):
+                continue
+            parts = raw.split(";")
+            for part_index, part in enumerate(parts):
+                if not pending and part.strip():
+                    start_line = line_number
+                pending.append(part)
+                if part_index < len(parts) - 1:
+                    statement = normalize_line(" ".join(pending))
+                    if statement:
+                        yield start_line, statement
+                    pending = []
+        if pending:
+            statement = normalize_line(" ".join(pending))
+            if statement:
+                yield start_line, statement
+
     def _scan_sql(self, path: Path) -> None:
         text = path.read_text(encoding="utf-8", errors="ignore")
-        tables: list[tuple[str, int]] = []
-        rls_tables: set[str] = set()
-        tables_with_policies: set[str] = set()
-        policies: dict[str, list[tuple[int, str]]] = {}
-        for i, raw in enumerate(text.splitlines(), 1):
+        for i, raw in self._statements(text):
             norm = normalize_line(raw)
-            create = re.search(r"create\s+table\s+(?:if\s+not\s+exists\s+)?([a-zA-Z_][a-zA-Z0-9_]*)", norm, re.IGNORECASE)
+
+            # Match CREATE TABLE with optional schema qualification
+            create = re.search(
+                r"create\s+table\s+(?:if\s+not\s+exists\s+)?(?:([a-zA-Z_][a-zA-Z0-9_]*)\.)?([a-zA-Z_][a-zA-Z0-9_]*)",
+                norm, re.IGNORECASE
+            )
             if create:
-                tables.append((create.group(1).lower(), i))
-            if re.search(r"enable\s+row\s+level\s+security", norm, re.IGNORECASE):
-                table = re.search(r"alter\s+table\s+([a-zA-Z_][a-zA-Z0-9_]*)", norm, re.IGNORECASE)
-                if table:
-                    rls_tables.add(table.group(1).lower())
-            policy = re.search(r"create\s+policy\s+\S+\s+on\s+([a-zA-Z_][a-zA-Z0-9_]*)\s+.*(for\s+all|for\s+select|for\s+insert|for\s+update|for\s+delete)", norm, re.IGNORECASE)
+                schema = create.group(1).lower() if create.group(1) else "public"
+                table = create.group(2).lower()
+                fq_table = f"{schema}.{table}"
+                self.tables.setdefault(fq_table, (path, i))
+
+            drop_table = re.search(
+                r"drop\s+table\s+(?:if\s+exists\s+)?(?:([a-zA-Z_][a-zA-Z0-9_]*)\.)?([a-zA-Z_][a-zA-Z0-9_]*)",
+                norm, re.IGNORECASE
+            )
+            if drop_table:
+                schema = drop_table.group(1).lower() if drop_table.group(1) else "public"
+                table = drop_table.group(2).lower()
+                fq_table = f"{schema}.{table}"
+                self.tables.pop(fq_table, None)
+                self.rls_tables.discard(fq_table)
+                self.policies.pop(fq_table, None)
+
+            # Match ALTER TABLE ... ENABLE ROW LEVEL SECURITY
+            if re.search(r"alter\s+table\s+.*enable\s+row\s+level\s+security", norm, re.IGNORECASE):
+                table_match = re.search(
+                    r"alter\s+table\s+(?:([a-zA-Z_][a-zA-Z0-9_]*)\.)?([a-zA-Z_][a-zA-Z0-9_]*)",
+                    norm, re.IGNORECASE
+                )
+                if table_match:
+                    schema = table_match.group(1).lower() if table_match.group(1) else "public"
+                    table = table_match.group(2).lower()
+                    self.rls_tables.add(f"{schema}.{table}")
+            elif re.search(r"alter\s+table\s+.*disable\s+row\s+level\s+security", norm, re.IGNORECASE):
+                table_match = re.search(
+                    r"alter\s+table\s+(?:([a-zA-Z_][a-zA-Z0-9_]*)\.)?([a-zA-Z_][a-zA-Z0-9_]*)",
+                    norm, re.IGNORECASE
+                )
+                if table_match:
+                    schema = table_match.group(1).lower() if table_match.group(1) else "public"
+                    table = table_match.group(2).lower()
+                    self.rls_tables.discard(f"{schema}.{table}")
+
+            drop_policy = re.search(
+                r"drop\s+policy\s+(?:if\s+exists\s+)?(\S+)\s+on\s+(?:([a-zA-Z_][a-zA-Z0-9_]*)\.)?([a-zA-Z_][a-zA-Z0-9_]*)",
+                norm, re.IGNORECASE
+            )
+            if drop_policy:
+                policy_name = drop_policy.group(1).strip('"').lower()
+                schema = drop_policy.group(2).lower() if drop_policy.group(2) else "public"
+                table = drop_policy.group(3).lower()
+                fq_table = f"{schema}.{table}"
+                remaining = [
+                    item for item in self.policies.get(fq_table, [])
+                    if item[3].strip('"').lower() != policy_name
+                ]
+                if remaining:
+                    self.policies[fq_table] = remaining
+                else:
+                    self.policies.pop(fq_table, None)
+
+            # Match CREATE POLICY with optional schema qualification
+            policy = re.search(
+                r"create\s+policy\s+(\S+)\s+on\s+(?:([a-zA-Z_][a-zA-Z0-9_]*)\.)?([a-zA-Z_][a-zA-Z0-9_]*)(?:\s+for\s+(?:all|select|insert|update|delete))?",
+                norm, re.IGNORECASE
+            )
             if policy:
-                table = policy.group(1).lower()
-                tables_with_policies.add(table)
-                policies.setdefault(table, []).append((i, norm))
+                policy_name = policy.group(1).strip('"')
+                schema = policy.group(2).lower() if policy.group(2) else "public"
+                table = policy.group(3).lower()
+                fq_table = f"{schema}.{table}"
+                latest = [
+                    item for item in self.policies.get(fq_table, [])
+                    if item[3].strip('"').lower() != policy_name.lower()
+                ]
+                latest.append((path, i, norm, policy_name))
+                self.policies[fq_table] = latest
+
+            # Check for editable role fields
             if re.search(r"role\s*=\s*['\"]?(admin|user|editor)['\"]?", raw, re.IGNORECASE) and "set" in norm.lower():
                 self.add(
                     rule="editable-role-field",
@@ -49,16 +140,20 @@ class DatabaseScanner(BaseScanner):
                     suggestion="Role changes must be handled by a privileged server function, not exposed in user update paths.",
                     confidence="low",
                 )
-        for table, line in tables:
-            if table not in rls_tables:
-                if table in tables_with_policies:
+
+    def _check_rls_state(self) -> None:
+        policies_by_table = self.policies
+        for table, (path, line) in self.tables.items():
+            if table not in self.rls_tables:
+                if table in policies_by_table:
+                    policy_path, policy_line, _, _ = policies_by_table[table][0]
                     self.add(
                         rule="policy-without-rls-enabled",
                         severity=Severity.CRITICAL,
-                        file=path,
-                        line=line,
-                        message=f"Table '{table}' has policies but Row Level Security is not enabled. Policies have no effect until RLS is enabled with 'ALTER TABLE ... ENABLE ROW LEVEL SECURITY'.",
-                        suggestion="Add 'ALTER TABLE {table} ENABLE ROW LEVEL SECURITY;' before creating policies.",
+                        file=policy_path,
+                        line=policy_line,
+                        message=f"Table '{table}' has policies but Row Level Security is not enabled. Policies have no effect until RLS is enabled.",
+                        suggestion=f"Add 'ALTER TABLE {table} ENABLE ROW LEVEL SECURITY;' for this table.",
                         confidence="high",
                     )
                 else:
@@ -71,16 +166,48 @@ class DatabaseScanner(BaseScanner):
                         suggestion="Enable RLS and create explicit policies that check the requesting user.",
                         confidence="medium",
                     )
-        for table, entries in policies.items():
-            for line, norm in entries:
-                if "using" not in norm.lower() and "with check" not in norm.lower():
+            elif table not in policies_by_table:
+                self.add(
+                    rule="rls-enabled-without-policy",
+                    severity=Severity.MEDIUM,
+                    file=path,
+                    line=line,
+                    message=f"Table '{table}' has RLS enabled but no policy was found in scanned migrations; access may be intentionally denied by default.",
+                    suggestion="Confirm deny-all behavior is intentional or add least-privilege policies.",
+                    confidence="medium",
+                )
+
+        for table, entries in policies_by_table.items():
+            for path, line, norm, policy_name in entries:
+                norm_lower = norm.lower()
+                if "using" not in norm_lower and "with check" not in norm_lower:
                     self.add(
                         rule="rls-policy-missing-condition",
                         severity=Severity.HIGH,
                         file=path,
                         line=line,
-                        message=f"RLS policy on '{table}' lacks a USING or WITH CHECK condition.",
-                        suggestion="Add a condition such as auth.uid() = user_id to restrict rows.",
+                        message=f"RLS policy '{policy_name}' on '{table}' lacks a USING or WITH CHECK condition.",
+                        suggestion="Add explicit row predicates appropriate to the permitted operation.",
+                        confidence="medium",
+                    )
+                if re.search(r"using\s*\(\s*true\s*\)", norm_lower) or re.search(r"with\s+check\s*\(\s*true\s*\)", norm_lower):
+                    self.add(
+                        rule="rls-policy-overly-permissive",
+                        severity=Severity.HIGH,
+                        file=path,
+                        line=line,
+                        message=f"RLS policy '{policy_name}' on '{table}' uses a true condition, allowing unrestricted access for its operation.",
+                        suggestion="Replace true with a restrictive ownership or role predicate.",
+                        confidence="high",
+                    )
+                if re.search(r"\bto\s+", norm_lower) is None:
+                    self.add(
+                        rule="rls-policy-missing-role-restriction",
+                        severity=Severity.MEDIUM,
+                        file=path,
+                        line=line,
+                        message=f"RLS policy '{policy_name}' on '{table}' does not declare an allowed role; PostgreSQL policies default to PUBLIC.",
+                        suggestion="Add a suitable TO role clause and verify that the predicate enforces the intended access boundary.",
                         confidence="medium",
                     )
 

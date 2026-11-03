@@ -59,6 +59,14 @@ When a user presents a product idea, design, specification, or market-research q
 5. Complete the applicable checklist in `references/launch-framework.md`. Mark each item verified, failed, not applicable, or blocked, with evidence and an owner for unresolved risks.
 6. Present a concise launch decision: ready, not ready, or ready with explicitly accepted residual risks. Never infer production readiness from a successful local build alone.
 
+### 5. Run the repository auditor when available
+
+1. Use the repository's installed QA engine or invoke `python -m vibe_coding_qa` from its root. Start with `python -m vibe_coding_qa gate --repo .` for a non-executing audit; this must report `NOT VERIFIED` unless project tests were actually run.
+2. Do not execute repository test scripts without explicit user permission. With permission, run `python -m vibe_coding_qa gate --repo . --explicit-permission` and configure `--test-timeout`, `--max-memory-mb`, `--max-cpu-seconds`, and `--test-image` when appropriate. Test execution requires a running Docker daemon and a locally available image; the CLI does not pull images or install dependencies.
+3. Inspect generated Markdown, JSON, and HTML reports; verify the same authoritative release decision, scanner notes, findings, test state, and coverage gaps appear consistently.
+4. Treat static findings as evidence-backed leads, not proof of exploitability or proof of security. Docker test isolation reduces exposure but cannot rule out runtime or kernel vulnerabilities; use a disposable VM for high-risk untrusted projects.
+5. Dependency advisory lookups are offline by default. Enable `VCQA_OSV_ENABLED=1` only when network access is appropriate and confirm its coverage notes before interpreting results.
+
 ## Security Questions to Always Ask
 
 - Can an unauthenticated user read or mutate data through direct requests?

@@ -274,6 +274,9 @@ def _detect_test_runners(repo: Path) -> list[str]:
             pass
     if any(repo.rglob("pytest.ini")) or any(repo.rglob("conftest.py")) or (repo / "pyproject.toml").is_file():
         runners.add("pytest")
+    unittest_files = [path for path in repo.rglob("test*.py") if not {".git", "node_modules", "__pycache__"}.intersection(path.parts)]
+    if any("unittest" in path.read_text(encoding="utf-8", errors="ignore") for path in unittest_files):
+        runners.add("unittest")
     if any(repo.rglob("*.test.ts")) or any(repo.rglob("*.test.tsx")) or any(repo.rglob("*.spec.ts")):
         runners.add("ts-js-tests")
     return sorted(runners)

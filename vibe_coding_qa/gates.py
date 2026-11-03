@@ -110,6 +110,44 @@ def score_module(findings: list[Finding], max_score: float = 100.0) -> tuple[flo
     return score, Status.PASS, deductions
 
 
+def _determine_gate(
+    overall: float,
+    minimum_score: int,
+    critical_count: int,
+    high_count: int,
+    test_status: str | Status | None,
+    test_execution_mode: str | None,
+) -> str:
+    """
+    Determine the release gate decision.
+
+    Returns one of: "block", "fail", "pass", "not_verified"
+    """
+    # Critical findings always block
+    if critical_count > 0:
+        return "block"
+
+    # High findings fail
+    if high_count > 0:
+        return "fail"
+
+    # Below minimum score fails
+    if overall < minimum_score:
+        return "fail"
+
+    # Normalize test_status to string
+    if isinstance(test_status, Status):
+        test_status_str = test_status.value
+    else:
+        test_status_str = test_status
+
+    if test_status_str == "fail":
+        return "fail"
+    if test_status_str == "pass":
+        return "pass"
+    return "not_verified"
+
+
 def assess(result: ScanResult, minimum_score: int | None = None) -> dict:
     if minimum_score is None:
         minimum_score = int(os.environ.get("VCQA_MINIMUM_SCORE", "60"))
@@ -133,18 +171,29 @@ def assess(result: ScanResult, minimum_score: int | None = None) -> dict:
         total_weight += weight
     overall = round(weighted_sum / total_weight, 2) if total_weight else 0.0
 
-    gate = "pass"
-    if result.release_blocked:
-        gate = "block"
-    elif overall < minimum_score or result.high_count > 0:
-        gate = "fail"
+    # Get test information
+    test_status = result.tests.get("status")
+    test_execution_mode = result.tests.get("execution_mode")
+
+    gate = _determine_gate(
+        overall=overall,
+        minimum_score=minimum_score,
+        critical_count=result.critical_count,
+        high_count=result.high_count,
+        test_status=test_status,
+        test_execution_mode=test_execution_mode,
+    )
 
     score_explanation["overall_score"] = overall
     score_explanation["minimum_score"] = minimum_score
     score_explanation["weights"] = MODULE_WEIGHTS
+    score_explanation["gate"] = gate
+    score_explanation["test_status"] = test_status
+    score_explanation["test_execution_mode"] = test_execution_mode
 
-    return {
+    assessment = {
         "overall_score": overall,
+        "minimum_score": minimum_score,
         "gate": gate,
         "weights": MODULE_WEIGHTS,
         "score_explanation": score_explanation,
@@ -153,15 +202,46 @@ def assess(result: ScanResult, minimum_score: int | None = None) -> dict:
             "high_fails_release": True,
             "minimum_score": minimum_score,
         },
+        # Also store at top level for easy access in release_decision
+        "test_status": test_status,
+        "test_execution_mode": test_execution_mode,
     }
+
+    # Store authoritative assessment on the result for consistent access
+    result._assessment = assessment
+
+    return assessment
+
+
+def release_gate_label(result: ScanResult) -> str:
+    if not result._assessment:
+        assess(result)
+    return {
+        "pass": "PASS",
+        "fail": "FAIL",
+        "block": "BLOCKED",
+        "not_verified": "NOT VERIFIED",
+    }.get(result.gate, "NOT VERIFIED")
 
 
 def release_decision(result: ScanResult) -> str:
+    # Ensure every consumer reads the same authoritative assessment.
+    if not result._assessment:
+        assess(result)
     # Use authoritative assessment if available
     if result._assessment:
         gate = result._assessment.get("gate", "unknown")
         overall = result._assessment.get("overall_score", 0)
         minimum = result._assessment.get("minimum_score", 60)
+        test_status = result._assessment.get("test_status")
+        test_mode = result._assessment.get("test_execution_mode")
+
+        # Normalize test_status to string
+        if isinstance(test_status, Status):
+            test_status_str = test_status.value
+        else:
+            test_status_str = test_status
+
         if gate == "block":
             return "BLOCKED: critical issues or failing tests must be resolved before release."
         if gate == "fail":
@@ -171,6 +251,12 @@ def release_decision(result: ScanResult) -> str:
                 return f"FAIL: high-severity findings remain; fix before release."
             if overall < minimum:
                 return f"FAIL: overall readiness score ({overall}) is below the minimum threshold ({minimum})."
+            if test_status_str == "fail":
+                return "FAIL: test suite failed."
+        if gate == "not_verified":
+            return f"NOT VERIFIED: overall score ({overall}) meets threshold but tests were not executed ({test_mode}). Run with --explicit-permission to verify."
+        if gate == "pass":
+            return f"PASS: no critical or high issues, score ({overall}) above threshold ({minimum}), tests passed."
     # Fallback to legacy logic
     if result.release_blocked:
         return "BLOCKED: critical issues or failing tests must be resolved before release."
@@ -196,4 +282,11 @@ def coverage_gaps(result: ScanResult) -> list[str]:
         gaps.append("No .gitignore detected; secret leaks are more likely.")
     if not result.modules:
         gaps.append("No scanner modules produced results.")
+
+    # Add test execution status to gaps
+    test_status = result.tests.get("status")
+    test_mode = result.tests.get("execution_mode")
+    if test_status == "skip" and test_mode in ("disabled", "blocked_no_permission", "no_runner"):
+        gaps.append(f"Tests not executed: {test_mode}. Use --explicit-permission to run tests.")
+
     return gaps

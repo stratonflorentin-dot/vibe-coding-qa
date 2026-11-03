@@ -8,7 +8,7 @@ from vibe_coding_qa import Finding, Severity
 
 
 SECRET_PATTERNS = [
-    ("private-key", re.compile(r"-----BEGIN (RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----", re.IGNORECASE), Severity.CRITICAL),
+    ("private-key", re.compile(r"-----BEGIN (RSA |EC |DSA |OPENSSH )?PRIVATE(?:\s+)KEY-----", re.IGNORECASE), Severity.CRITICAL),
     ("aws-access-key", re.compile(r"AKIA[0-9A-Z]{16}"), Severity.CRITICAL),
     ("generic-api-key", re.compile(r"(?<!\w)(api[_-]?key|apikey|api_secret|api_secret_key|secret[_-]?key|auth[_-]?token)\s*[:=]\s*['\"][A-Za-z0-9_\-]{16,}['\"]", re.IGNORECASE), Severity.HIGH),
     ("supabase-service-key", re.compile(r"(eyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]*\.eyJ[A-Za-z0-9_-]*|sbp_[a-zA-Z0-9]{40,})", re.IGNORECASE), Severity.CRITICAL),
@@ -16,15 +16,30 @@ SECRET_PATTERNS = [
     ("stripe-key", re.compile(r"sk_(live|test)_[0-9a-zA-Z]{24,}", re.IGNORECASE), Severity.CRITICAL),
     ("password-in-code", re.compile(r"password\s*[:=]\s*['\"][^'\"]{4,}['\"]", re.IGNORECASE), Severity.HIGH),
     ("url-with-credentials", re.compile(r"https?://[^:]+:[^@]+@[^\s\"']+", re.IGNORECASE), Severity.HIGH),
+    # Additional secret patterns for better coverage
+    ("jwt-token", re.compile(r"eyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]*\.[A-Za-z0-9_-]*"), Severity.CRITICAL),
+    ("bearer-token", re.compile(r"(?i)bearer\s+[A-Za-z0-9_\-]{20,}"), Severity.HIGH),
+    ("database-url", re.compile(r"(?i)(postgres|mysql|mongodb|redis)://[^:\s]+:[^@\s]+@[^\s\"']+"), Severity.CRITICAL),
+    ("github-token", re.compile(r"gh[pousr]_[A-Za-z0-9]{36,}"), Severity.CRITICAL),
+    ("slack-token", re.compile(r"xox[baprs]-[A-Za-z0-9-]{10,}"), Severity.HIGH),
+    ("sendgrid-key", re.compile(r"SG\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}"), Severity.CRITICAL),
+    ("twilio-key", re.compile(r"SK[0-9a-f]{32}"), Severity.CRITICAL),
+    ("heroku-key", re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"), Severity.HIGH),
+    ("private-key-pem", re.compile(r"-----BEGIN (RSA |EC |DSA |OPENSSH |ENCRYPTED )?PRIVATE(?:\s+)KEY-----", re.IGNORECASE), Severity.CRITICAL),
+    ("ssh-private-key", re.compile(r"-----BEGIN OPENSSH PRIVATE(?:\s+)KEY-----", re.IGNORECASE), Severity.CRITICAL),
+    ("pgp-private-key", re.compile(r"-----BEGIN PGP PRIVATE(?:\s+)KEY BLOCK-----", re.IGNORECASE), Severity.CRITICAL),
 ]
 
 
-# Compile all secret patterns for redaction
-_SECRET_REDACTION_PATTERNS = [p for _, p, _ in SECRET_PATTERNS]
+_PEM_BLOCK_PATTERNS = [
+    re.compile(r"-----BEGIN (?P<label>(?:[A-Z0-9]+ )*PRIVATE(?:\s+)KEY)-----[\s\S]*?-----END (?P=label)-----", re.IGNORECASE),
+    re.compile(r"-----BEGIN PGP PRIVATE(?:\s+)KEY BLOCK-----[\s\S]*?-----END PGP PRIVATE(?:\s+)KEY BLOCK-----", re.IGNORECASE),
+]
+_SECRET_REDACTION_PATTERNS = _PEM_BLOCK_PATTERNS + [p for _, p, _ in SECRET_PATTERNS]
 
 
 def redact_secrets(text: str) -> str:
-    """Redact known secret patterns from text."""
+    """Redact known credentials and complete private-key blocks."""
     for pattern in _SECRET_REDACTION_PATTERNS:
         text = pattern.sub("[REDACTED]", text)
     return text
@@ -35,7 +50,10 @@ def is_secret_finding(finding: Finding) -> bool:
     secret_rules = {
         "private-key", "aws-access-key", "generic-api-key", "supabase-service-key",
         "openai-key", "stripe-key", "password-in-code", "url-with-credentials",
-        "client-side-secret", "committed-env-file", "session-secret-hardcoded"
+        "client-side-secret", "committed-env-file", "session-secret-hardcoded",
+        "jwt-token", "bearer-token", "database-url", "github-token",
+        "slack-token", "sendgrid-key", "twilio-key", "heroku-key",
+        "private-key-pem", "ssh-private-key", "pgp-private-key",
     }
     return finding.rule.split(":")[-1] in secret_rules
 

@@ -157,34 +157,63 @@ class SecurityScanner(BaseScanner):
     def _scan_supabase_rls(self) -> None:
         ignore = load_ignore_patterns(self.repo)
         sql_files = [p for p in self.repo.rglob("*.sql") if not is_ignored(p, self.repo, ignore)]
+        sql_files.sort(key=lambda path: path.as_posix().lower())
         if not sql_files and not (self.repo / "supabase").is_dir():
             return
         rls_enabled_tables: set[str] = set()
-        tables_with_policies: set[str] = set()
-        tables_seen: set[str] = set()
+        tables_with_policies: dict[str, tuple[Path, int]] = {}
+        tables_seen: dict[str, tuple[Path, int]] = {}
         for path in sql_files:
             text = path.read_text(encoding="utf-8", errors="ignore")
             for i, raw in enumerate(text.splitlines(), 1):
                 norm = normalize_line(raw)
-                create_match = re.search(r"create\s+table\s+(?:if\s+not\s+exists\s+)?([a-zA-Z_][a-zA-Z0-9_]*)", norm, re.IGNORECASE)
+                create_match = re.search(
+                    r"create\s+table\s+(?:if\s+not\s+exists\s+)?(?:([a-zA-Z_][a-zA-Z0-9_]*)\.)?([a-zA-Z_][a-zA-Z0-9_]*)",
+                    norm, re.IGNORECASE
+                )
                 if create_match:
-                    tables_seen.add(create_match.group(1).lower())
+                    schema = create_match.group(1).lower() if create_match.group(1) else "public"
+                    table = create_match.group(2).lower()
+                    fq_table = f"{schema}.{table}"
+                    tables_seen.setdefault(fq_table, (path, i))
                 if re.search(r"alter\s+table\s+.*enable\s+row\s+level\s+security", norm, re.IGNORECASE):
-                    table_match = re.search(r"alter\s+table\s+([a-zA-Z_][a-zA-Z0-9_]*)", norm, re.IGNORECASE)
+                    table_match = re.search(
+                        r"alter\s+table\s+(?:([a-zA-Z_][a-zA-Z0-9_]*)\.)?([a-zA-Z_][a-zA-Z0-9_]*)",
+                        norm, re.IGNORECASE
+                    )
                     if table_match:
-                        rls_enabled_tables.add(table_match.group(1).lower())
-                if re.search(r"create\s+policy\s+.*on\s+([a-zA-Z_][a-zA-Z0-9_]*)", norm, re.IGNORECASE):
-                    policy_match = re.search(r"create\s+policy\s+.*on\s+([a-zA-Z_][a-zA-Z0-9_]*)", norm, re.IGNORECASE)
+                        schema = table_match.group(1).lower() if table_match.group(1) else "public"
+                        table = table_match.group(2).lower()
+                        fq_table = f"{schema}.{table}"
+                        rls_enabled_tables.add(fq_table)
+                elif re.search(r"alter\s+table\s+.*disable\s+row\s+level\s+security", norm, re.IGNORECASE):
+                    table_match = re.search(
+                        r"alter\s+table\s+(?:([a-zA-Z_][a-zA-Z0-9_]*)\.)?([a-zA-Z_][a-zA-Z0-9_]*)",
+                        norm, re.IGNORECASE
+                    )
+                    if table_match:
+                        schema = table_match.group(1).lower() if table_match.group(1) else "public"
+                        table = table_match.group(2).lower()
+                        rls_enabled_tables.discard(f"{schema}.{table}")
+                if re.search(r"create\s+policy\s+.*on\s+(?:([a-zA-Z_][a-zA-Z0-9_]*)\.)?([a-zA-Z_][a-zA-Z0-9_]*)", norm, re.IGNORECASE):
+                    policy_match = re.search(
+                        r"create\s+policy\s+.*on\s+(?:([a-zA-Z_][a-zA-Z0-9_]*)\.)?([a-zA-Z_][a-zA-Z0-9_]*)",
+                        norm, re.IGNORECASE
+                    )
                     if policy_match:
-                        tables_with_policies.add(policy_match.group(1).lower())
-        for table in tables_seen:
+                        schema = policy_match.group(1).lower() if policy_match.group(1) else "public"
+                        table = policy_match.group(2).lower()
+                        fq_table = f"{schema}.{table}"
+                        tables_with_policies.setdefault(fq_table, (path, i))
+        for table, (table_path, table_line) in tables_seen.items():
             if table not in rls_enabled_tables:
                 if table in tables_with_policies:
+                    policy_path, policy_line = tables_with_policies[table]
                     self.add(
                         rule="policy-without-rls-enabled",
                         severity=Severity.CRITICAL,
-                        file=sql_files[0] if sql_files else self.repo / "supabase",
-                        line=1,
+                        file=policy_path,
+                        line=policy_line,
                         message=f"Table '{table}' has policies but Row Level Security is not enabled. Policies have no effect until RLS is enabled with 'ALTER TABLE ... ENABLE ROW LEVEL SECURITY'.",
                         suggestion="Add 'ALTER TABLE {table} ENABLE ROW LEVEL SECURITY;' before creating policies.",
                         confidence="high",
@@ -193,8 +222,8 @@ class SecurityScanner(BaseScanner):
                     self.add(
                         rule="missing-rls",
                         severity=Severity.CRITICAL,
-                        file=sql_files[0] if sql_files else self.repo / "supabase",
-                        line=1,
+                        file=table_path,
+                        line=table_line,
                         message=f"Table '{table}' does not appear to have Row Level Security (RLS) enabled or policies defined.",
                         suggestion="Enable RLS on every table and write explicit policies with auth checks.",
                         confidence="medium",
@@ -222,7 +251,7 @@ class SecurityScanner(BaseScanner):
             return
         text = path.read_text(encoding="utf-8", errors="ignore")
         for i, raw in enumerate(text.splitlines(), 1):
-            if re.search(r"(multer|upload|busboy|formidable|receive|save).*?file", raw, re.IGNORECASE):
+            if re.search(r"(?:multer|upload|busboy|formidable|receive|save)[A-Za-z0-9_]*\s*(?:\(|=).*?(?:file|req\.files|multipart)", raw, re.IGNORECASE):
                 if not re.search(r"(mimetype|extension|magic|size|limit|validate|sanitize)", raw, re.IGNORECASE):
                     self.add(
                         rule="unvalidated-file-upload",

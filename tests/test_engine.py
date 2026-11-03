@@ -4,6 +4,7 @@ import sys
 import tempfile
 from pathlib import Path
 from unittest import TestCase
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -62,9 +63,26 @@ CREATE TABLE orders (id uuid primary key);
         # File should be unchanged in dry-run.
         self.assertIn("console.log", (self.repo / "src" / "client.ts").read_text())
 
-    def test_run_tests_detects_package_json_script(self):
-        result = run_tests(self.repo, command="python -c \"print(1)\"")
+    def test_run_tests_uses_package_json_script_in_sandbox(self):
+        def fake_docker_run(command, **kwargs):
+            if command[1:2] == ["info"]:
+                return subprocess.CompletedProcess(command, 0, "27.0.0", "")
+            if command[1:3] == ["image", "inspect"]:
+                return subprocess.CompletedProcess(command, 0, "[]", "")
+            if command[1:2] == ["run"]:
+                return subprocess.CompletedProcess(command, 0, "tests passed", "")
+            return subprocess.CompletedProcess(command, 0, "", "")
+
+        with patch("vibe_coding_qa.engine.shutil.which", return_value="docker"), patch(
+            "vibe_coding_qa.engine.subprocess.run", side_effect=fake_docker_run
+        ), patch(
+            "vibe_coding_qa.engine._run_bounded_process",
+            return_value=(subprocess.CompletedProcess(["docker", "run"], 0, "tests passed", ""), False, False),
+        ):
+            result = run_tests(self.repo, explicit_permission=True)
         self.assertEqual(result["status"], "pass")
+        self.assertEqual(result["execution_mode"], "docker_isolated")
+        self.assertEqual(result["command"], "npm run test")
 
     def test_clean_repo_has_open_gate(self):
         clean = Path(tempfile.mkdtemp(prefix="vcqa-clean-"))
@@ -77,7 +95,7 @@ CREATE TABLE orders (id uuid primary key);
             result = run_scan(clean)
             assess(result)
             self.assertGreaterEqual(result.overall_score, 95.0)
-            self.assertIn("PASS", release_decision(result))
+            self.assertIn("NOT VERIFIED", release_decision(result))
             self.assertFalse(result.release_blocked)
         finally:
             shutil.rmtree(clean, ignore_errors=True)

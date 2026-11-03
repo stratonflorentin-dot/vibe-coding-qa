@@ -3,4 +3,4 @@ CREATE TABLE users (
     email text not null
 );
 ALTER TABLE users ENABLE ROW LEVEL SECURITY;
-CREATE POLICY users_own_rows ON users USING (auth.uid() = id);
+CREATE POLICY users_own_rows ON users TO authenticated USING (auth.uid() = id);

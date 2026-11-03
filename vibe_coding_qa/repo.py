@@ -19,6 +19,39 @@ def _sanitize_url(url: str) -> str:
     return re.sub(r"https?://[^:]+:[^@]+@", "https://***:***@", url)
 
 
+def _create_git_config_with_credential_helper(token: str) -> tuple[str, str]:
+    """Create a temporary Git credential store and config with restricted permissions."""
+    import shlex
+    from urllib.parse import quote
+
+    credential_file = tempfile.NamedTemporaryFile(
+        mode="w", suffix=".credentials", delete=False, prefix="vcqa-git-credentials-", encoding="utf-8"
+    )
+    credential_path = credential_file.name
+    try:
+        credential_file.write("https" + "://" + "x-access-token" + ":" + quote(token, safe="") + "@github.com\n")
+    finally:
+        credential_file.close()
+    try:
+        os.chmod(credential_path, 0o600)
+    except OSError:
+        pass
+    config_content = "[credential]\n    helper = store --file=" + shlex.quote(credential_path) + "\n"
+    config_file = tempfile.NamedTemporaryFile(
+        mode="w", suffix=".gitconfig", delete=False, prefix="vcqa-git-config-", encoding="utf-8"
+    )
+    config_path = config_file.name
+    try:
+        config_file.write(config_content)
+    finally:
+        config_file.close()
+    try:
+        os.chmod(config_path, 0o600)
+    except OSError:
+        pass
+    return config_path, credential_path
+
+
 def clone_repo(github_ref: str, token: str | None = None, workdir: Path | None = None) -> Path:
     """Clone a GitHub repository into a temporary directory.
 
@@ -38,31 +71,46 @@ def clone_repo(github_ref: str, token: str | None = None, workdir: Path | None =
     else:
         url = github_ref
 
-    # Use git credential helper via environment variable to avoid token in URL
-    env = os.environ.copy()
-    env["GIT_TERMINAL_PROMPT"] = "0"
-    
-    if token and url.startswith("https://"):
-        # Use GIT_ASKPASS or credential helper via env to avoid token in command line
-        # This is safer than embedding in URL
-        env["GIT_ASKPASS"] = "echo"
-        env["GIT_USERNAME"] = "token"
-        env["GIT_PASSWORD"] = token
-        cmd = ["git", "clone", "--depth", "1", "--single-branch", url, str(workdir)]
-    else:
-        cmd = ["git", "clone", "--depth", "1", "--single-branch", url, str(workdir)]
+    from urllib.parse import urlsplit
+    parsed_url = urlsplit(url)
+    if parsed_url.username is not None or parsed_url.password is not None:
+        raise ValueError("Repository URLs must not contain embedded credentials; pass a GitHub token separately.")
+    if token and parsed_url.hostname != "github.com":
+        raise ValueError("GitHub tokens can only be used with github.com repositories.")
 
-    result = subprocess.run(
-        cmd,
-        capture_output=True,
-        text=True,
-        env=env,
-        check=False,
-    )
-    
+    allowed_environment = {
+        "PATH", "SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT", "TEMP", "TMP",
+        "HOME", "USERPROFILE", "HOMEDRIVE", "HOMEPATH", "APPDATA", "LOCALAPPDATA",
+        "LANG", "LC_ALL", "LC_CTYPE", "SSH_AUTH_SOCK", "SSH_AGENT_PID",
+    }
+    env = {
+        key: value for key, value in os.environ.items()
+        if key.upper() in allowed_environment or key.upper().startswith("LC_")
+    }
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    env["GIT_CONFIG_NOSYSTEM"] = "1"
+    env["GIT_OPTIONAL_LOCKS"] = "0"
+
+    temporary_credentials: list[str] = []
+    if token and url.startswith("https://"):
+        config_path, credential_path = _create_git_config_with_credential_helper(token)
+        temporary_credentials.extend((config_path, credential_path))
+        env["GIT_CONFIG_GLOBAL"] = config_path
+    cmd = ["git", "clone", "--depth", "1", "--single-branch", url, str(workdir)]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, env=env, check=False)
+    except OSError:
+        raise RuntimeError("Unable to invoke Git while cloning the repository.") from None
+    finally:
+        for credential_path in temporary_credentials:
+            try:
+                os.unlink(credential_path)
+            except OSError:
+                pass
+
     if result.returncode != 0:
-        # Sanitize any URLs in stderr before raising
-        sanitized_stderr = _sanitize_url(result.stderr)
+        sanitized_stderr = result.stderr.replace(token, "[REDACTED]") if token else result.stderr
+        sanitized_stderr = _sanitize_url(sanitized_stderr)
         raise RuntimeError(f"Failed to clone {_sanitize_url(url)}: {sanitized_stderr}")
     return workdir
 

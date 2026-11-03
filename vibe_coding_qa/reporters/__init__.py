@@ -6,11 +6,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .. import ScanResult
-from ..gates import coverage_gaps
+from ..gates import coverage_gaps, release_decision, release_gate_label
 
 
 def _h(text: str) -> str:
     return html.escape(str(text))
+
+
+def _value(value):
+    return getattr(value, "value", value)
 
 
 def markdown_report(result: ScanResult, title: str = "Vibe Coding QA Production Readiness Report") -> str:
@@ -22,7 +26,8 @@ def markdown_report(result: ScanResult, title: str = "Vibe Coding QA Production 
         f"- **Overall Score:** {result.overall_score}/100",
         f"- **Critical Findings:** {result.critical_count}",
         f"- **High Findings:** {result.high_count}",
-        f"- **Release Gate:** {'BLOCKED' if result.release_blocked else 'OPEN'}",
+        f"- **Release Gate:** {release_gate_label(result)}",
+        f"- **Decision:** {release_decision(result)}",
         "",
         "## Module Summary",
         "",
@@ -32,6 +37,9 @@ def markdown_report(result: ScanResult, title: str = "Vibe Coding QA Production 
     for module in result.modules:
         lines.append(f"| {module.module} | {module.score} | {module.status.value} | {len(module.findings)} |")
     lines.append("")
+    scanner_notes = [f"{module.module}: {note}" for module in result.modules for note in module.notes]
+    if scanner_notes:
+        lines.extend(["## Scanner Notes", "", *[f"- {note}" for note in scanner_notes], ""])
 
     arch = result.tests.get("architecture")
     if arch:
@@ -49,7 +57,7 @@ def markdown_report(result: ScanResult, title: str = "Vibe Coding QA Production 
     if result.tests:
         lines.append("## Test Results")
         lines.append("")
-        lines.append(f"- Status: `{result.tests.get('status', 'unknown')}`")
+        lines.append(f"- Status: `{_value(result.tests.get('status', 'unknown'))}`")
         lines.append(f"- Command: `{result.tests.get('command', 'N/A')}`")
         if "duration_ms" in result.tests:
             lines.append(f"- Duration: {result.tests['duration_ms']} ms")
@@ -101,6 +109,8 @@ def markdown_report(result: ScanResult, title: str = "Vibe Coding QA Production 
 
 def json_report(result: ScanResult) -> str:
     data = result.to_dict()
+    data["release_gate"] = release_gate_label(result)
+    data["release_decision"] = release_decision(result)
     data["coverage_gaps"] = coverage_gaps(result)
     return json.dumps(data, indent=2)
 
@@ -122,7 +132,12 @@ def html_report(result: ScanResult, title: str = "Vibe Coding QA Production Read
     module_rows = ""
     for m in result.modules:
         module_rows += f"<tr><td>{_h(m.module)}</td><td>{m.score}</td><td>{_h(m.status.value)}</td><td>{len(m.findings)}</td></tr>"
-    status = "BLOCKED" if result.release_blocked else "OPEN"
+    scanner_notes = [f"{m.module}: {note}" for m in result.modules for note in m.notes]
+    notes_html = ""
+    if scanner_notes:
+        notes_html = "<h2>Scanner Notes</h2><ul>" + "".join(f"<li>{_h(note)}</li>" for note in scanner_notes) + "</ul>"
+    status = release_gate_label(result)
+    decision = _h(release_decision(result))
     arch = result.tests.get("architecture", {})
     arch_html = ""
     if arch:
@@ -140,7 +155,7 @@ def html_report(result: ScanResult, title: str = "Vibe Coding QA Production Read
     if result.tests:
         test_html = (
             f"<h2>Test Results</h2><ul>"
-            f"<li>Status: {_h(result.tests.get('status', 'unknown'))}</li>"
+            f"<li>Status: {_h(_value(result.tests.get('status', 'unknown')))}</li>"
             f"<li>Command: <code>{_h(result.tests.get('command', 'N/A'))}</code></li>"
             f"<li>Duration: {_h(result.tests.get('duration_ms', 'N/A'))} ms</li>"
             f"</ul>"
@@ -172,12 +187,14 @@ th {{ background: #f3f3f3; }}
 <p><strong>Generated:</strong> {datetime.now(timezone.utc).isoformat()}</p>
 <p><strong>Overall Score:</strong> {result.overall_score}/100</p>
 <p><strong>Release Gate:</strong> {status}</p>
+<p><strong>Decision:</strong> {decision}</p>
 {arch_html}
 <h2>Module Summary</h2>
 <table>
 <thead><tr><th>Module</th><th>Score</th><th>Status</th><th>Findings</th></tr></thead>
 <tbody>{module_rows}</tbody>
 </table>
+{notes_html}
 {test_html}
 {gaps_html}
 <h2>Findings</h2>
