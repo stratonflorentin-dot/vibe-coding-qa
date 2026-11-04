@@ -1,6 +1,7 @@
 """Security scanner: secrets, auth, RLS, injection, client/server boundaries."""
 
 import re
+import subprocess
 from pathlib import Path
 
 from . import BaseScanner, SECRET_PATTERNS, SQL_INJECTION_HINTS, is_ignored, is_likely_client_file, is_test_or_fixture, load_ignore_patterns, normalize_line
@@ -30,7 +31,6 @@ class SecurityScanner(BaseScanner):
             self._scan_for_shell_exec(path)
             self._scan_for_rate_limits(path)
             self._scan_for_insecure_sessions(path)
-        self._scan_supabase_rls()
         self._scan_env_files()
         self._scan_firebase_rules()
         return self.findings
@@ -76,7 +76,7 @@ class SecurityScanner(BaseScanner):
                 )
 
     def _scan_for_client_secrets(self, path: Path) -> None:
-        if not is_likely_client_file(path):
+        if not is_likely_client_file(path, self.repo):
             return
         text = path.read_text(encoding="utf-8", errors="ignore")
         for i, raw in enumerate(text.splitlines(), 1):
@@ -231,20 +231,32 @@ class SecurityScanner(BaseScanner):
 
     def _scan_env_files(self) -> None:
         ignore = load_ignore_patterns(self.repo)
-        for path in self.repo.rglob(".env*"):
-            if is_ignored(path, self.repo, ignore):
-                continue
-            if path.name == ".env.example":
-                continue
-            self.add(
-                rule="committed-env-file",
-                severity=Severity.HIGH,
-                file=path,
-                line=1,
-                message=f"{path.name} is committed to the repository; environment files should not be tracked.",
-                suggestion="Remove the file from git, add it to .gitignore, and rotate any exposed secrets.",
-                confidence="high",
+        try:
+            tracked_result = subprocess.run(
+                ["git", "-C", str(self.repo.resolve()), "ls-files", "-z", "--", "."],
+                capture_output=True, timeout=10, check=False,
             )
+            tracked = set(tracked_result.stdout.decode("utf-8", errors="surrogateescape").split("\0")) if tracked_result.returncode == 0 else None
+        except (OSError, subprocess.TimeoutExpired):
+            tracked = None
+        for path in self.repo.rglob(".env*"):
+            if is_ignored(path, self.repo, ignore) or path.name == ".env.example" or not path.is_file():
+                continue
+            relative = path.relative_to(self.repo).as_posix()
+            if tracked is not None and relative in tracked:
+                self.add(
+                    rule="committed-env-file", severity=Severity.HIGH, file=path, line=1,
+                    message=f"{path.name} is tracked by Git; environment files may expose credentials.",
+                    suggestion="Remove the file from Git, add it to .gitignore, and rotate any exposed secrets.",
+                    confidence="high",
+                )
+            elif tracked is None:
+                self.add(
+                    rule="env-file-tracking-unverified", severity=Severity.LOW, file=path, line=1,
+                    message=f"{path.name} is present; Git tracking could not be verified.",
+                    suggestion="Check whether the file is tracked and ensure it contains no exposed secrets.",
+                    confidence="medium",
+                )
 
     def _scan_for_insecure_uploads(self, path: Path) -> None:
         if path.suffix not in {".ts", ".js", ".py"}:

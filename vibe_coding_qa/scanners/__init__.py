@@ -24,7 +24,7 @@ SECRET_PATTERNS = [
     ("slack-token", re.compile(r"xox[baprs]-[A-Za-z0-9-]{10,}"), Severity.HIGH),
     ("sendgrid-key", re.compile(r"SG\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}"), Severity.CRITICAL),
     ("twilio-key", re.compile(r"SK[0-9a-f]{32}"), Severity.CRITICAL),
-    ("heroku-key", re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"), Severity.HIGH),
+    ("heroku-key", re.compile(r"\bheroku[_-]?(?:api[_-]?)?(?:key|token)\s*['\"]?\s*[:=]\s*['\"]?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b", re.IGNORECASE), Severity.HIGH),
     ("private-key-pem", re.compile(r"-----BEGIN (RSA |EC |DSA |OPENSSH |ENCRYPTED )?PRIVATE(?:\s+)KEY-----", re.IGNORECASE), Severity.CRITICAL),
     ("ssh-private-key", re.compile(r"-----BEGIN OPENSSH PRIVATE(?:\s+)KEY-----", re.IGNORECASE), Severity.CRITICAL),
     ("pgp-private-key", re.compile(r"-----BEGIN PGP PRIVATE(?:\s+)KEY BLOCK-----", re.IGNORECASE), Severity.CRITICAL),
@@ -159,6 +159,37 @@ def is_config_file(path: Path) -> bool:
     return path.name.lower() in {"dockerfile", "docker-compose.yml", "docker-compose.yaml", "nginx.conf", ".env.example", ".env.local", ".env.production"}
 
 
-def is_likely_client_file(path: Path) -> bool:
-    parts = set(p.lower() for p in path.parts)
-    return bool(parts & {"components", "pages", "app", "src", "client", "frontend", "ui"})
+def is_likely_client_file(path: Path, repo: Path | None = None) -> bool:
+    try:
+        relative = path.relative_to(repo) if repo else path
+    except ValueError:
+        relative = path
+    parts = [part.lower() for part in relative.parts]
+    name = path.name.lower()
+    if path.suffix.lower() not in {".ts", ".tsx", ".js", ".jsx", ".vue", ".svelte"}:
+        return False
+    if set(parts[:-1]) & {"api", "server", "backend", "functions", "middleware"}:
+        return False
+    if name.startswith("middleware.") or ".server." in name or name.startswith("server."):
+        return False
+    try:
+        text = path.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return False
+    if re.search(r"(?m)^\s*['\"]use server['\"]\s*;?", text) or re.search(r"\bimport\s+['\"]server-only['\"]", text):
+        return False
+    if re.search(r"(?m)^\s*['\"]use client['\"]\s*;?", text):
+        return True
+    if set(parts[:-1]) & {"client", "frontend", "components", "ui"} or name.startswith("client.") or ".client." in name:
+        return True
+    if "src" in parts[:-1] and repo:
+        package_file = repo / "package.json"
+        try:
+            if re.search(r'"next"\s*:', package_file.read_text(encoding="utf-8", errors="ignore")):
+                return False
+        except OSError:
+            pass
+        return True
+    if "pages" in parts[:-1]:
+        return not re.search(r"\b(getServerSideProps|getStaticProps|apiResolver)\b", text)
+    return False

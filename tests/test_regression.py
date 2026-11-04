@@ -383,7 +383,9 @@ class TestRunnerTests(TestCase):
 
             self.assertNotIn(".env", captured["files"])
             self.assertNotIn("embedded-secret-password", captured["source"])
-            self.assertEqual(captured["test_source"], fixture_source)
+            self.assertIn("tests/test_fixture.py", captured["files"])
+            self.assertIn("[REDACTED]", captured["test_source"])
+            self.assertNotIn("sample-key-not-real", captured["test_source"])
             self.assertNotIn("VCQA_TEST_SECRET", captured["environment"])
             self.assertNotIn("host-secret-value", str(captured["environment"]))
             self.assertNotIn("embedded-secret-password", result["stdout"])

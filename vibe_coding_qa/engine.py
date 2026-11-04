@@ -134,7 +134,7 @@ def _run_bounded_process(
     return completed, timed_out, output_exceeded.is_set()
 
 
-def _copy_test_snapshot(repo: Path) -> tuple[Path, Path]:
+def _copy_test_snapshot(repo: Path, max_bytes: int = 256 * 1024 * 1024) -> tuple[Path, Path]:
     source = repo.resolve()
     temporary_root = Path(tempfile.mkdtemp(prefix="vcqa-test-snapshot-"))
     snapshot = temporary_root / "repo"
@@ -142,6 +142,7 @@ def _copy_test_snapshot(repo: Path) -> tuple[Path, Path]:
     excluded_dirs = {".git", "node_modules", ".venv", "venv", "__pycache__", ".tox", ".pytest_cache", ".aws", ".ssh", ".gnupg"}
     excluded_files = {".npmrc", ".pypirc", ".netrc", "id_rsa", "id_ed25519", "id_dsa", "id_ecdsa", "credentials.json", "service-account.json"}
     excluded_extensions = {".pem", ".key", ".p12", ".pfx", ".crt", ".cer"}
+    total_bytes = 0
     for current, directories, files in os.walk(source, topdown=True, followlinks=False):
         current_path = Path(current)
         directories[:] = [
@@ -165,21 +166,21 @@ def _copy_test_snapshot(repo: Path) -> tuple[Path, Path]:
             except ValueError:
                 continue
             try:
-                relative_parts = source_file.relative_to(source).parts[:-1]
-                is_test_fixture = any(
-                    part.lower() in {"test", "tests", "fixture", "fixtures", "__fixtures__", "sample", "samples"}
-                    for part in relative_parts
-                )
-                if is_test_fixture:
-                    shutil.copyfile(source_file, target_dir / name)
-                    continue
-                content = source_file.read_bytes()
+                remaining = max_bytes - total_bytes
+                with source_file.open("rb") as stream:
+                    content = stream.read(remaining + 1)
+                if len(content) > remaining:
+                    shutil.rmtree(temporary_root, ignore_errors=True)
+                    raise ValueError(f"Test snapshot exceeds the {max_bytes} byte limit.")
+                total_bytes += len(content)
                 try:
                     text = content.decode("utf-8")
+                    if "\0" in text:
+                        continue
                     target_file = target_dir / name
                     target_file.write_text(redact_secrets(text), encoding="utf-8")
                 except UnicodeDecodeError:
-                    shutil.copyfile(source_file, target_dir / name)
+                    continue
             except OSError:
                 continue
     return temporary_root, snapshot
@@ -204,6 +205,8 @@ def run_tests(
     max_memory_mb: int = 512,
     max_cpu_seconds: int = 60,
     test_image: str | None = None,
+    max_snapshot_mb: int = 256,
+    max_write_mb: int = 64,
 ) -> dict:
     """
     Run tests with security isolation.
@@ -239,11 +242,11 @@ def run_tests(
             "execution_mode": "blocked_no_permission",
         }
 
-    if timeout <= 0 or max_memory_mb <= 0 or max_cpu_seconds <= 0:
+    if timeout <= 0 or max_memory_mb <= 0 or max_cpu_seconds <= 0 or max_snapshot_mb <= 0 or max_write_mb < 2:
         return {
             "status": Status.SKIP,
             "command": command,
-            "summary": "Test timeout, memory limit, and CPU limit must all be positive values.",
+            "summary": "Timeout, memory, CPU and snapshot limits must be positive; writable storage must be at least 2 MB.",
             "duration_ms": 0,
             "execution_mode": "invalid_limits",
         }
@@ -360,7 +363,16 @@ def run_tests(
             "execution_mode": "sandbox_unavailable",
         }
 
-    temporary_root, snapshot = _copy_test_snapshot(repo)
+    try:
+        temporary_root, snapshot = _copy_test_snapshot(repo, max_bytes=max_snapshot_mb * 1024 * 1024)
+    except (OSError, ValueError) as exc:
+        return {
+            "status": Status.SKIP,
+            "command": command_str,
+            "summary": f"Could not prepare bounded test snapshot: {type(exc).__name__}.",
+            "duration_ms": 0,
+            "execution_mode": "snapshot_unavailable",
+        }
     container_name = f"vcqa-test-{uuid.uuid4().hex[:12]}"
     resource_info = {
         "memory_mb": max_memory_mb,
@@ -368,7 +380,9 @@ def run_tests(
         "enforced": True,
         "environment_allowlisted": True,
         "isolation": "docker-network-disabled-read-only-rootfs",
-        "snapshot_excludes_secrets": True,
+        "snapshot_excludes_secrets": False,
+        "snapshot_max_mb": max_snapshot_mb,
+        "tmp_and_shm_max_mb": max_write_mb,
     }
     docker_command = [
         docker, "run", "--pull=never", "--rm", "--name", container_name,
@@ -380,8 +394,9 @@ def run_tests(
         "--security-opt", "no-new-privileges",
         "--cap-drop", "ALL",
         "--read-only",
-        "--tmpfs", "/tmp:rw,nosuid,size=64m",
-        "--mount", f"type=bind,source={snapshot},target=/workspace",
+        "--tmpfs", f"/tmp:rw,nosuid,nodev,size={max_write_mb - 1}m",
+        "--shm-size", "1m",
+        "--mount", f"type=bind,source={snapshot},target=/workspace,readonly",
         "--workdir", "/workspace",
         "--env", "CI=true",
         "--env", "NODE_ENV=test",
@@ -414,6 +429,15 @@ def run_tests(
         summary = "Test output exceeded 1,000,000 bytes and was terminated." if output_exceeded else (output[-2000:] if len(output) > 2000 else output)
         skipped = _count_skipped(output)
         status = Status.FAIL if output_exceeded or result.returncode != 0 else Status.PASS
+        execution_mode = "docker_isolated"
+        missing_infrastructure = bool(re.search(
+            r"No module named ['\"](?:pytest|unittest)['\"]|Cannot find module ['\"][^'\"]+['\"]|(?:pytest|vitest|jest): (?:not found|command not found)|executable file not found in \$PATH",
+            output, re.IGNORECASE,
+        )) or result.returncode == 127
+        if status == Status.FAIL and not output_exceeded and missing_infrastructure and not re.search(r"FAILED \(failures=|\b\d+ failed\b", output):
+            status = Status.SKIP
+            execution_mode = "test_infrastructure_unavailable"
+            summary = "Test infrastructure appears unavailable. Use a locally prepared --test-image with the necessary dependencies. " + summary
         return {
             "status": status,
             "command": command_str,
@@ -424,9 +448,9 @@ def run_tests(
             "duration_ms": duration_ms,
             "skipped": skipped,
             "output_truncated": output_exceeded,
-            "execution_mode": "docker_isolated",
+            "execution_mode": execution_mode,
             "resource_limits": resource_info,
-            "warning": "Tests ran in a restricted Docker container using a secret-filtered snapshot, no network, explicit resource limits, and bounded output. Container isolation is not a proof against all kernel/runtime vulnerabilities.",
+            "warning": "Tests ran in a restricted Docker container using a filtered snapshot. Redaction is pattern-based and cannot guarantee removal of all secrets; container isolation is not a proof against runtime vulnerabilities.",
         }
     except FileNotFoundError:
         return {
@@ -512,6 +536,8 @@ def run_pipeline(
     max_memory_mb: int = 512,
     max_cpu_seconds: int = 60,
     test_image: str | None = None,
+    max_snapshot_mb: int = 256,
+    max_write_mb: int = 64,
     keep_clone: bool = False,
 ) -> ScanResult:
     workdir: Path | None = None
@@ -519,14 +545,20 @@ def run_pipeline(
         workdir = load_repository(source, token=github_token)
         result = run_scan(workdir, metadata=True)
 
-        ai_reviews = review_findings(workdir, result.findings, provider=get_ai_provider())
-        if ai_reviews:
-            result.tests["ai_reviews"] = ai_reviews
-
         if dry_run_fixes or apply_fixes:
             engine = FixEngine(workdir, dry_run=not apply_fixes)
             engine.apply(result.findings)
+            if apply_fixes and engine.applied:
+                result = run_scan(workdir, metadata=True)
+                remaining = {(finding.rule, str(finding.file)) for finding in result.findings}
+                for change in engine.applied:
+                    finding = change["finding"]
+                    change["resolved"] = (finding["rule"], finding["file"]) not in remaining
             result.tests["fixes"] = {"applied": engine.applied, "skipped": engine.skipped, "dry_run": engine.dry_run}
+
+        ai_reviews = review_findings(workdir, result.findings, provider=get_ai_provider())
+        if ai_reviews:
+            result.tests["ai_reviews"] = ai_reviews
 
         if run_tests_flag:
             result.tests.update(run_tests(
@@ -537,6 +569,8 @@ def run_pipeline(
                 max_memory_mb=max_memory_mb,
                 max_cpu_seconds=max_cpu_seconds,
                 test_image=test_image,
+                max_snapshot_mb=max_snapshot_mb,
+                max_write_mb=max_write_mb,
                 no_execution=no_execution,
                 explicit_permission=explicit_permission,
             ))
