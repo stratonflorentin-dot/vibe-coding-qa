@@ -152,6 +152,13 @@ def _copy_test_snapshot(repo: Path, max_bytes: int = 256 * 1024 * 1024) -> tuple
         relative_dir = current_path.relative_to(source)
         target_dir = snapshot / relative_dir
         target_dir.mkdir(parents=True, exist_ok=True)
+        # The container is unprivileged (--cap-drop ALL) and cannot override file
+        # permissions, so ensure the snapshot stays traversable/readable even when
+        # the host umask is restrictive.
+        try:
+            os.chmod(target_dir, 0o755)
+        except OSError:
+            pass
         for name in files:
             source_file = current_path / name
             lowered = name.lower()
@@ -179,6 +186,10 @@ def _copy_test_snapshot(repo: Path, max_bytes: int = 256 * 1024 * 1024) -> tuple
                         continue
                     target_file = target_dir / name
                     target_file.write_text(redact_secrets(text), encoding="utf-8")
+                    try:
+                        os.chmod(target_file, 0o644)
+                    except OSError:
+                        pass
                 except UnicodeDecodeError:
                     continue
             except OSError:
@@ -539,9 +550,14 @@ def run_tests(
     # mounted read-only and copied into a size-bounded writable tmpfs workspace
     # before the test command runs, so the suite may create temp files and build
     # artifacts without touching the source or the read-only root filesystem.
+    #
+    # The copy must NOT preserve ownership. The container runs with --cap-drop ALL,
+    # so it holds no CAP_CHOWN: ``cp -a``/``cp -p`` would try to chown the copies to
+    # the snapshot owner and fail with EPERM, aborting under ``set -e``. ``cp -R``
+    # copies contents and permissions without preserving ownership.
     inner_command = (
         "set -e; "
-        "cp -a /vcqa-src/. /workspace/; "
+        "cp -R /vcqa-src/. /workspace/; "
         "cd /workspace; "
         "exec " + " ".join(shlex.quote(part) for part in cmd)
     )

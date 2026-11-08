@@ -1534,8 +1534,13 @@ class DockerWorkspaceIsolationTests(TestCase):
             self.assertIn("--read-only", command)
             self.assertIn("none", command)
             inner = command[-1]
-            self.assertIn("cp -a /vcqa-src/. /workspace/", inner)
+            self.assertIn("cp -R /vcqa-src/. /workspace/", inner)
             self.assertIn("exec", inner)
+            # The container has no CAP_CHOWN (--cap-drop ALL), so the copy must not
+            # preserve ownership or it would fail with EPERM and abort the run.
+            self.assertNotIn("cp -a ", inner)
+            self.assertNotIn("cp -p ", inner)
+            self.assertNotIn("--preserve", inner)
             limits = result["resource_limits"]
             self.assertEqual(limits["source_mount"], "read-only")
             self.assertEqual(limits["workspace"], "tmpfs-read-write")
@@ -1587,6 +1592,38 @@ class DockerWorkspaceIsolationTests(TestCase):
                 repo,
                 run_returncode=0,
                 run_stdout="Error: Cannot find module 'vitest'",
+            )
+            self.assertNotEqual(result["status"], "pass")
+        finally:
+            shutil.rmtree(repo, ignore_errors=True)
+
+    def test_isolation_flags_are_all_present(self):
+        repo = Path(tempfile.mkdtemp(prefix="vcqa-docker-flags-"))
+        try:
+            _, command = self._run_with_capture(repo)
+            joined = " ".join(command)
+            self.assertEqual(command[command.index("--network") + 1], "none")
+            self.assertEqual(command[command.index("--cap-drop") + 1], "ALL")
+            self.assertIn("--read-only", command)
+            self.assertIn("no-new-privileges", command)
+            self.assertIn("--pids-limit", command)
+            self.assertIn("--memory", command)
+            self.assertIn("--ulimit", command)
+            # Images must never be pulled implicitly by the engine.
+            self.assertIn("--pull=never", joined)
+            self.assertIn("/vcqa-src,readonly", joined)
+            # Only an allowlisted set of environment variables is passed through.
+            self.assertFalse(any(arg.startswith("VCQA_") for arg in command))
+        finally:
+            shutil.rmtree(repo, ignore_errors=True)
+
+    def test_container_start_failure_is_not_a_pass(self):
+        repo = Path(tempfile.mkdtemp(prefix="vcqa-docker-startfail-"))
+        try:
+            result, _ = self._run_with_capture(
+                repo,
+                run_returncode=125,
+                run_stdout="docker: Error response from daemon: unable to start container.",
             )
             self.assertNotEqual(result["status"], "pass")
         finally:
