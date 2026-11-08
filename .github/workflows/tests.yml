@@ -21,3 +21,25 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - name: Run unit tests
         run: python -m unittest discover -s tests -v
+
+  # Real Docker sandbox execution. Unlike the unit tests, this job runs actual
+  # containers through the production code path instead of mocking the Docker
+  # CLI. It fails if the Docker daemon is expected but unavailable.
+  docker-integration:
+    runs-on: ubuntu-latest
+    needs: unittest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Verify Docker daemon is available
+        run: docker info
+      - name: Pull the test image explicitly
+        # The engine never pulls images or installs dependencies; CI does it here.
+        run: docker pull python:3.12-slim
+      - name: Run Docker integration tests
+        env:
+          VCQA_DOCKER_INTEGRATION: "1"
+          VCQA_INTEGRATION_IMAGE: python:3.12-slim
+        run: python -m unittest discover -s tests -p "test_docker_integration.py" -v

@@ -141,6 +141,70 @@ class FixEngine:
         shutil.copy2(backup, target)
         return [target]
 
+    @staticmethod
+    def _finding_key(finding: "Finding | dict") -> tuple[str, str]:
+        if isinstance(finding, Finding):
+            return finding.rule, str(finding.file)
+        return str(finding["rule"]), str(finding["file"])
+
+    def verify(self, rescan_findings: list[Finding], tests: dict | None = None) -> dict:
+        """Confirm which applied fixes actually removed the detected issue.
+
+        Verification is evidence-based: a fix is only marked ``resolved`` when a
+        fresh scan of the modified repository no longer reports the rule for that
+        file. It is never inferred from the fact that a file was edited or from a
+        shifted line number. When the same rule appears more than once in a file,
+        resolutions are counted by multiplicity so a partial fix is reported as
+        ``partially_resolved`` rather than ``resolved``.
+
+        If tests were run and failed, no fix can be confirmed and every attempt is
+        reported as ``unverifiable`` so a regression is never masked.
+        """
+        before: dict[tuple[str, str], int] = {}
+        changes_by_key: dict[tuple[str, str], list[dict]] = {}
+        for change in self.applied:
+            key = self._finding_key(change["finding"])
+            before[key] = before.get(key, 0) + 1
+            changes_by_key.setdefault(key, []).append(change)
+
+        after: dict[tuple[str, str], int] = {}
+        for finding in rescan_findings:
+            key = self._finding_key(finding)
+            after[key] = after.get(key, 0) + 1
+
+        tests_failed = bool(tests and tests.get("status") == "fail")
+        report: dict = {
+            "resolved": [],
+            "partially_resolved": [],
+            "unresolved": [],
+            "unverifiable": [],
+            "tests_failed": tests_failed,
+            "verified": False,
+        }
+        for key, attempted in before.items():
+            remaining = after.get(key, 0)
+            entry = {"rule": key[0], "file": key[1], "attempted": attempted, "remaining": remaining}
+            if tests_failed:
+                status = "unverifiable"
+            elif remaining == 0:
+                status = "resolved"
+            elif remaining < attempted:
+                status = "partially_resolved"
+            else:
+                status = "unresolved"
+            entry["status"] = status
+            report[status].append(entry)
+            for change in changes_by_key[key]:
+                change["resolution"] = status
+
+        report["verified"] = (
+            not tests_failed
+            and bool(report["resolved"])
+            and not report["partially_resolved"]
+            and not report["unresolved"]
+        )
+        return report
+
 
 def suggest_fixes(findings: list[Finding]) -> list[dict]:
     """Generate human-readable suggestions without modifying files."""

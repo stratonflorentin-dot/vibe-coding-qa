@@ -20,7 +20,7 @@ To add it to another project, copy the `vibe-coding-qa` folder into that project
 - **Engineering QA:** clone or point to a repo and scan actual source code for security, quality, database, infrastructure, performance, compliance, and dependency/supply-chain issues.
 - **File-and-line findings:** every issue includes the file path and line number.
 - **Fixes:** preview or apply safe automated fixes (e.g. remove `console.log`, strip `debugger`) with path validation, backups, diffs, and rollback.
-- **Tests:** detects npm scripts, pytest, and standard-library unittest; execution requires `--explicit-permission` and an available Docker daemon plus a local image. Tests run from a temporary secret-filtered snapshot with networking disabled, read-only root filesystem, memory/CPU/PID limits, and a timeout; images are never pulled automatically.
+- **Tests:** detects npm scripts, pytest, and standard-library unittest; execution requires `--explicit-permission` and an available Docker daemon plus a locally available image. The original repository is never mutated: a temporary secret-filtered snapshot is mounted read-only and copied into a size-bounded writable workspace before the suite runs, with networking disabled, a read-only root filesystem, memory/CPU/PID limits, and a wall-clock timeout. Images are never pulled automatically. Test status is decided by classification (see below), not by the exit code alone.
 - **Release gate:** score the repo 0-100 with explainable deductions; deduplicate findings; configurable thresholds; reports one of `PASS`, `FAIL`, `BLOCKED`, or `NOT VERIFIED`.
 - **Framework guidance:** plan features, trust boundaries, authentication, RLS, secrets, input validation, CSRF, API abuse controls, TLS/headers, email/SMS flows, and Tanzania-focused privacy checks.
 - **External tools:** optionally integrate Fallow, REA, PentAGI, API Anything, and UI guidance.
@@ -78,14 +78,80 @@ The gate uses the same stored assessment in CLI output and Markdown/JSON/HTML re
 
 The engine returns a weighted 0-100 score and never treats skipped test execution as a successful verification.
 
+### Test status classification
+
+A zero exit code alone never produces `PASS`. The engine parses the runner output and classifies every test as discovered, executed, passed, failed, skipped, or errored, then decides:
+
+| Result | Decision |
+|--------|----------|
+| At least one test executed, none failed, exit code 0 | `PASS` |
+| Any test failed or errored | `FAIL` |
+| All tests skipped | `NOT VERIFIED` |
+| No tests discovered | `NOT VERIFIED` |
+| Output not recognized as a known runner | `NOT VERIFIED` |
+| Docker daemon or required dependency unavailable | `NOT VERIFIED` |
+| Timeout or output/resource limit exceeded | `FAIL` |
+
+Supported output parsers: Python `unittest` and `pytest`, and JavaScript `Jest` and `Vitest`. The same authoritative decision is used by the CLI, the release gate, and the Markdown/JSON/HTML reports; a custom command that simply exits 0 without recognized test output is reported as `NOT VERIFIED`, not `PASS`.
+
+### Docker workspace design
+
+Isolated test execution keeps the audited repository untouched:
+
+1. A temporary snapshot of the repository is created with common secret files removed (`.env*` except `.env.example`, credential files, private-key extensions) and detected credentials redacted in copied text files.
+2. The snapshot is bind-mounted **read-only** at `/vcqa-src`.
+3. A separate size-bounded **writable** tmpfs is mounted at `/workspace`; the snapshot is copied into it before the test command runs, and the working directory is set there. Build artifacts and temp files are allowed; the container root filesystem stays read-only.
+4. The container runs with `--network none`, `--cap-drop ALL`, `--security-opt no-new-privileges`, read-only rootfs, memory/CPU/PID limits, a bounded `/tmp` and `/workspace`, `--shm-size 1m`, and a wall-clock timeout. Only an allowlisted set of environment variables is inherited.
+5. The snapshot is removed after the run, including on failure paths.
+
+### Dependency preparation
+
+The engine **never installs packages or pulls images**. If a dependency is missing, the run is reported as `NOT VERIFIED` (infrastructure unavailable) rather than `PASS`. To provide dependencies without network access inside the sandbox, prepare a local image ahead of time and select it with `--test-image`:
+
+```bash
+# Python project with pytest already installed
+docker build -t my-org/vcqa-python:latest - <<'EOF'
+FROM python:3.12-slim
+RUN pip install --no-cache-dir pytest
+EOF
+
+# Node project with dependencies installed
+docker build -t my-org/vcqa-node:latest - <<'EOF'
+FROM node:22-bookworm-slim
+EOF
+
+python -m vibe_coding_qa.cli scan --repo /path/to/project \
+  --explicit-permission --test-image my-org/vcqa-python:latest --output vcqa-reports
+```
+
+Default images are `python:3.12-slim` and `node:22-bookworm-slim`. `node_modules`, virtual environments, and credential files are not copied into the snapshot, so for Node projects install dependencies into the image (or a base image that already contains them) rather than relying on the working tree. If the selected image is not available locally, the run stops with `NOT VERIFIED` and never pulls.
+
 ### Limitations
 
 - Static analysis only: it cannot prove runtime behavior, access control bypasses, or business-logic bugs.
 - Pattern-based detection produces false positives and false negatives; treat every finding as a review prompt, not a certification.
-- Test execution is opt-in and requires Docker. The engine runs a temporary copy with common secret files removed and detected credentials redacted, no network, a read-only root filesystem, memory/CPU/PID limits, a wall-clock timeout, and a bounded output capture. It does not mount the original repository or inherit developer environment variables. Container isolation is not a proof against all kernel/runtime vulnerabilities; tests remain unverified if the daemon or image is unavailable. Make the selected image available before the audit (default images are `python:3.12-slim` and `node:22-bookworm-slim`), or set `--test-image`; the CLI does not pull images or install project dependencies.
-- Dependency checks use local package metadata and conservative historical heuristics by default. Optional OSV lookup is explicit and offline by default. It resolves npm `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`, Python `poetry.lock`, `uv.lock`, `Pipfile.lock`, and exactly pinned `requirements.txt` dependencies; npm transitive lock entries are included. Results are queried by exact package version, capped at 250 dependencies, and report the OSV advisory source; other lockfile formats and unresolved version ranges remain outside coverage.
-- Secret detection skips test/fixture files to reduce noise; manually review those files.
+- Test execution is opt-in and requires Docker. The engine copies a secret-filtered snapshot into a bounded writable workspace, mounts the snapshot read-only rather than mounting the original repository, disables networking, keeps the container root filesystem read-only, applies memory/CPU/PID limits and a wall-clock timeout, and captures output within a bounded size. It does not inherit developer environment variables. Container isolation is not a proof against all kernel/runtime vulnerabilities; tests remain unverified if the daemon, image, or a required dependency is unavailable. Make the selected image available before the audit (default images are `python:3.12-slim` and `node:22-bookworm-slim`), or set `--test-image`; the CLI does not pull images or install project dependencies.
+- Dependency checks use local package metadata and conservative historical heuristics by default. Optional OSV lookup is explicit and offline by default. It resolves npm `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`, Python `poetry.lock`, `uv.lock`, `Pipfile.lock`, and exactly pinned `requirements.txt` dependencies; npm transitive lock entries are included. Results are queried by exact package version, capped at 250 dependencies, and report the OSV advisory source; other lockfile formats and unresolved version ranges remain outside coverage. Failed or timed-out OSV lookups are reported as incomplete coverage, never as a clean result.
+- Secret detection inspects the matched credential value, not the file name or the surrounding text. Real credentials are still reported inside test, fixture, mock, and example files, and private keys are always reported. Genuinely synthetic placeholders (for example `your-api-key-here` or `xxxx`) may be suppressed; review such matches in context.
+- Database RLS analysis is a conservative, identifier-aware heuristic, not a full PostgreSQL parser. Complex constructs (dynamic SQL, `DO` blocks, `plpgsql` functions) are reported as coverage limitations, and optional `pglast` validation is used when installed.
 - Compliance checks are heuristics, not legal advice; confirm requirements with official sources and qualified specialists.
+
+## Repository automation and branch protection
+
+The CI workflow in [`.github/workflows/tests.yml`](.github/workflows/tests.yml) runs the unit-test matrix (Python 3.10/3.11/3.12) and a Docker integration job that executes real containers through the production code path. Recommended repository settings (configure these in GitHub; the tool never changes external repository settings):
+
+- Mark the `unittest` (all matrix versions) and `docker-integration` checks as required status checks on the protected branch.
+- Require the branch to be up to date before merging and require a pull request review.
+- Keep the default workflow `permissions: contents: read`.
+
+Run the Docker integration tests locally with:
+
+```bash
+docker pull python:3.12-slim
+VCQA_DOCKER_INTEGRATION=1 python -m unittest discover -s tests -p "test_docker_integration.py" -v
+```
+
+Without `VCQA_DOCKER_INTEGRATION=1` those tests are skipped, so the standard unit-test suite needs no Docker.
 
 ## Configuration
 

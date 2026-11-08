@@ -7,12 +7,24 @@ Findings are labeled as 'heuristic' or 'verified' based on available evidence.
 import json
 import os
 import re
+import time
 import urllib.error
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from . import BaseScanner, is_ignored, load_ignore_patterns
 from vibe_coding_qa import Finding, Severity
+
+
+_OSV_ENDPOINT = "https://api.osv.dev/v1/query"
+# Process-level cache: (ecosystem, name, version) -> (expiry_monotonic, advisories).
+_OSV_CACHE: dict[tuple[str, str, str], tuple[float, list[dict]]] = {}
+
+
+def clear_osv_cache() -> None:
+    """Clear the OSV response cache (used by tests and long-running callers)."""
+    _OSV_CACHE.clear()
 
 
 class DependencyScanner(BaseScanner):
@@ -21,25 +33,36 @@ class DependencyScanner(BaseScanner):
     def __init__(self, repo: Path):
         super().__init__(repo)
         self.notes: list[str] = []
+        self._reported_vulns: set[tuple[str, str]] = set()
 
-    # Known vulnerable versions (historical data, not live advisories)
-    # These are examples of versions with known CVEs - in production you would
-    # use a proper vulnerability database like OSV, GitHub Advisory, or Snyk.
-    KNOWN_VULNERABLE_VERSIONS = {
+    _OSV_MAX_BATCH = 250
+    _OSV_MAX_CONCURRENCY = 5
+    _OSV_FETCH_TIMEOUT = 8.0
+    _OSV_CACHE_TTL = 3600.0
+    _OSV_DEFAULT_BUDGET = 30.0
+
+    # Locally maintained affected ranges (heuristic, not live advisories).
+    # Each entry is matched against an *exact resolved version*, never reported
+    # merely because a package has a historical CVE. Confirm with OSV before
+    # treating any of these as a confirmed current vulnerability.
+    KNOWN_VULNERABLE_RANGES = {
         "lodash": {
-            "versions": ["4.17.20", "4.17.19", "4.17.18", "4.17.17", "4.17.16", "4.17.15", "4.17.14", "4.17.13", "4.17.12", "4.17.11"],
+            "ecosystem": "npm",
+            "affected": "<4.17.21",
             "cve": "CVE-2021-23337",
-            "description": "Prototype pollution in lodash",
+            "description": "command injection via template in lodash",
         },
         "express": {
-            "versions": ["4.17.2", "4.17.1", "4.17.0", "4.16.4", "4.16.3", "4.16.2", "4.16.1", "4.16.0"],
+            "ecosystem": "npm",
+            "affected": "<4.17.3",
             "cve": "CVE-2022-24999",
-            "description": "Open redirect in express",
+            "description": "open redirect via qs in Express",
         },
         "jquery": {
-            "versions": ["3.5.1", "3.5.0", "3.4.1", "3.4.0", "3.3.1", "3.3.0", "3.2.1", "3.2.0", "3.1.1", "3.1.0", "3.0.0"],
+            "ecosystem": "npm",
+            "affected": "<3.5.0",
             "cve": "CVE-2020-11023",
-            "description": "XSS in jQuery",
+            "description": "XSS via HTML containing <option> elements",
         },
     }
 
@@ -63,6 +86,7 @@ class DependencyScanner(BaseScanner):
 
     def scan(self) -> list[Finding]:
         self._scan_package_json()
+        self._scan_known_vulnerable_resolved()
         self._scan_python_deps()
         self._scan_lockfile_consistency()
         self._scan_ci_workflows()
@@ -79,26 +103,36 @@ class DependencyScanner(BaseScanner):
         if not dependencies:
             self.notes.append("OSV lookup enabled, but no supported resolved dependencies were found in package-lock.json, yarn.lock, pnpm-lock.yaml, Poetry/uv lockfiles, Pipfile.lock, or pinned requirements.txt.")
             return
-        if len(dependencies) > 250:
-            self.notes.append(f"OSV query scope limited to the first 250 of {len(dependencies)} resolved dependencies.")
-            dependencies = dependencies[:250]
+        if len(dependencies) > self._OSV_MAX_BATCH:
+            self.notes.append(f"OSV query scope limited to the first {self._OSV_MAX_BATCH} of {len(dependencies)} resolved dependencies.")
+            dependencies = dependencies[:self._OSV_MAX_BATCH]
+
+        budget = self._osv_budget_seconds()
+        deadline = time.monotonic() + budget
+        advisories_by_index: dict[int, list[dict]] = {}
+        failures: list[str] = []
+        deferred = 0
+        workers = max(1, min(self._OSV_MAX_CONCURRENCY, len(dependencies)))
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = {}
+            for index, (ecosystem, name, version, _lockfile) in enumerate(dependencies):
+                if time.monotonic() >= deadline:
+                    deferred = len(dependencies) - index
+                    break
+                futures[pool.submit(self._osv_lookup, ecosystem, name, version)] = index
+            for future in as_completed(futures):
+                index = futures[future]
+                try:
+                    advisories_by_index[index] = future.result()
+                except (OSError, urllib.error.URLError, json.JSONDecodeError, TimeoutError) as exc:
+                    name, version = dependencies[index][1], dependencies[index][2]
+                    failures.append(f"{name}@{version} ({type(exc).__name__})")
+
         checked = 0
-        for ecosystem, name, version, lockfile in dependencies:
-            try:
-                payload = json.dumps({"package": {"name": name, "ecosystem": ecosystem}, "version": version}).encode("utf-8")
-                request = urllib.request.Request(
-                    "https://api.osv.dev/v1/query",
-                    data=payload,
-                    headers={"Content-Type": "application/json", "User-Agent": "vibe-coding-qa"},
-                    method="POST",
-                )
-                with urllib.request.urlopen(request, timeout=8) as response:
-                    advisory_data = json.loads(response.read().decode("utf-8"))
-                checked += 1
-            except (OSError, urllib.error.URLError, json.JSONDecodeError, TimeoutError) as exc:
-                self.notes.append(f"OSV lookup incomplete after {checked} dependencies: {type(exc).__name__}.")
-                return
-            for advisory in advisory_data.get("vulns", []):
+        for index, advisories in sorted(advisories_by_index.items()):
+            _ecosystem, name, version, lockfile = dependencies[index]
+            checked += 1
+            for advisory in advisories:
                 advisory_id = advisory.get("id", "OSV advisory")
                 aliases = advisory.get("aliases", [])
                 if aliases:
@@ -120,7 +154,42 @@ class DependencyScanner(BaseScanner):
                     suggestion="Review the advisory's affected range and upgrade to a version confirmed as patched.",
                     confidence="high",
                 )
-        self.notes.append(f"OSV checked {checked} resolved dependencies; matches are advisory-backed and require review of affected ranges.")
+        note = f"OSV checked {checked} resolved dependencies; matches are advisory-backed and require review of affected ranges."
+        if failures:
+            note += f" {len(failures)} lookup(s) could not be verified: {', '.join(failures[:5])}."
+        if deferred:
+            note += f" {deferred} dependency(ies) were skipped after the {budget:.0f}s global time budget was exhausted."
+        self.notes.append(note)
+
+    @classmethod
+    def _osv_budget_seconds(cls) -> float:
+        raw = os.environ.get("VCQA_OSV_BUDGET_SECONDS", str(cls._OSV_DEFAULT_BUDGET))
+        try:
+            return max(1.0, float(raw))
+        except ValueError:
+            return cls._OSV_DEFAULT_BUDGET
+
+    def _osv_lookup(self, ecosystem: str, name: str, version: str) -> list[dict]:
+        key = (ecosystem, name, version)
+        now = time.monotonic()
+        cached = _OSV_CACHE.get(key)
+        if cached and cached[0] > now:
+            return cached[1]
+        advisories = self._osv_request(ecosystem, name, version)
+        _OSV_CACHE[key] = (now + self._OSV_CACHE_TTL, advisories)
+        return advisories
+
+    def _osv_request(self, ecosystem: str, name: str, version: str) -> list[dict]:
+        payload = json.dumps({"package": {"name": name, "ecosystem": ecosystem}, "version": version}).encode("utf-8")
+        request = urllib.request.Request(
+            _OSV_ENDPOINT,
+            data=payload,
+            headers={"Content-Type": "application/json", "User-Agent": "vibe-coding-qa"},
+            method="POST",
+        )
+        with urllib.request.urlopen(request, timeout=self._OSV_FETCH_TIMEOUT) as response:
+            advisory_data = json.loads(response.read().decode("utf-8"))
+        return advisory_data.get("vulns", [])
 
     def _resolved_dependencies(self) -> list[tuple[str, str, str, Path]]:
         found: list[tuple[str, str, str, Path]] = []
@@ -288,20 +357,12 @@ class DependencyScanner(BaseScanner):
         for name, version in deps.items():
             cleaned = version.strip()
             pinned = bool(re.fullmatch(r"\d+\.\d+\.\d+", cleaned))
-            
-            if pinned and name in self.KNOWN_VULNERABLE_VERSIONS:
-                vuln_info = self.KNOWN_VULNERABLE_VERSIONS[name]
-                if cleaned in vuln_info["versions"]:
-                    self.add(
-                        rule="vulnerable-dependency",
-                        severity=Severity.MEDIUM,
-                        file=pkg,
-                        line=1,
-                        message=f"Heuristic: {name}@{version} matches a version listed in historical data ({vuln_info['cve']}: {vuln_info['description']}); this does not confirm a current affected range.",
-                        suggestion="Verify this exact resolved version against OSV or the vendor advisory before treating it as a confirmed vulnerability.",
-                        confidence="low",
-                    )
-            
+
+            if pinned and name in self.KNOWN_VULNERABLE_RANGES:
+                vuln_info = self.KNOWN_VULNERABLE_RANGES[name]
+                if self._satisfies(cleaned, vuln_info["affected"]):
+                    self._report_known_vulnerability(pkg, 1, name, cleaned, vuln_info)
+
             # Check for historically compromised packages
             if name in self.HISTORICALLY_COMPROMISED:
                 incident = self.HISTORICALLY_COMPROMISED[name]
@@ -314,6 +375,33 @@ class DependencyScanner(BaseScanner):
                     suggestion=f"Verify the current version is not affected. Check {incident['cve'] or 'supply chain advisories'} for details. This is a historical finding, not a confirmed current vulnerability.",
                     confidence="low",  # Historical incident, not current verification
                 )
+
+    def _scan_known_vulnerable_resolved(self) -> None:
+        """Apply the locally maintained ranges to resolved (including transitive) npm deps."""
+        for ecosystem, name, version, lockfile in self._resolved_dependencies():
+            if ecosystem != "npm" or name not in self.KNOWN_VULNERABLE_RANGES:
+                continue
+            if (name, version) in self._reported_vulns:
+                continue
+            vuln_info = self.KNOWN_VULNERABLE_RANGES[name]
+            if self._satisfies(version, vuln_info["affected"]):
+                self._report_known_vulnerability(lockfile, self._dependency_line(lockfile, name, version), name, version, vuln_info)
+
+    def _report_known_vulnerability(self, file: Path, line: int, name: str, version: str, vuln_info: dict) -> None:
+        self._reported_vulns.add((name, version))
+        self.add(
+            rule="vulnerable-dependency",
+            severity=Severity.MEDIUM,
+            file=file,
+            line=line,
+            message=(
+                f"Heuristic: {name}@{version} falls within the locally known affected range "
+                f"'{vuln_info['affected']}' ({vuln_info['cve']}: {vuln_info['description']}). "
+                f"Confirm this exact version against OSV or the vendor advisory."
+            ),
+            suggestion="Upgrade to a version the advisory marks as patched, then re-verify with OSV.",
+            confidence="low",
+        )
 
     def _scan_python_deps(self) -> None:
         req = self.repo / "requirements.txt"
@@ -440,3 +528,34 @@ class DependencyScanner(BaseScanner):
     @staticmethod
     def _version_tuple(version: str):
         return tuple(int(p) for p in re.split(r"[.-]", version) if p.isdigit())
+
+    @classmethod
+    def _satisfies(cls, version: str, constraint: str) -> bool:
+        """Return True when a concrete version falls inside a comma-joined range.
+
+        Supports ``<``, ``<=``, ``>``, ``>=`` and ``=`` against numeric dotted
+        versions (e.g. ``"<3.5.0"`` or ``">=1.2.0,<1.5.0"``).
+        """
+        actual = cls._version_tuple(version)
+        if not actual:
+            return False
+        for clause in constraint.split(","):
+            match = re.fullmatch(r"(<=|>=|<|>|=)?\s*(\d+(?:\.\d+)*)", clause.strip())
+            if not match:
+                return False
+            operator = match.group(1) or "="
+            bound = tuple(int(p) for p in match.group(2).split("."))
+            length = max(len(actual), len(bound))
+            left = actual + (0,) * (length - len(actual))
+            right = bound + (0,) * (length - len(bound))
+            if operator == "<" and not left < right:
+                return False
+            if operator == "<=" and not left <= right:
+                return False
+            if operator == ">" and not left > right:
+                return False
+            if operator == ">=" and not left >= right:
+                return False
+            if operator == "=" and not left == right:
+                return False
+        return True

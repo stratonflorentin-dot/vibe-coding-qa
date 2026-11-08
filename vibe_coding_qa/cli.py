@@ -14,7 +14,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="vibe-coding-qa",
         description="Automated Vibe Coding QA and production-readiness engineering tool.",
     )
-    parser.add_argument("--version", action="version", version="vibe-coding-qa 0.3.0")
+    parser.add_argument("--version", action="version", version="vibe-coding-qa 0.4.0")
     sub = parser.add_subparsers(dest="command", required=True)
 
     scan = sub.add_parser("scan", help="Scan a repository and generate reports.")
@@ -40,6 +40,10 @@ def build_parser() -> argparse.ArgumentParser:
     fix.add_argument("--test-command", help="Override the detected test command.")
     fix.add_argument("--test-image", help="Locally prepared Docker image for tests.")
     fix.add_argument("--test-timeout", type=int, default=300, help="Maximum test duration in seconds.")
+    fix.add_argument("--max-memory-mb", type=int, default=512, help="Test memory limit inside the sandbox.")
+    fix.add_argument("--max-cpu-seconds", type=int, default=60, help="Test process CPU limit inside the sandbox.")
+    fix.add_argument("--max-snapshot-mb", type=int, default=256, help="Maximum snapshot input size in MiB.")
+    fix.add_argument("--max-write-mb", type=int, default=64, help="Combined tmp and workspace capacity in MiB.")
 
     gate = sub.add_parser("gate", help="Return a release gate decision and exit non-zero when blocked.")
     gate.add_argument("--repo", required=True, help="Local path or GitHub owner/repo.")
@@ -99,6 +103,10 @@ def main(argv: list[str] | None = None) -> int:
             test_command=args.test_command,
             test_image=args.test_image,
             test_timeout=args.test_timeout,
+            max_memory_mb=args.max_memory_mb,
+            max_cpu_seconds=args.max_cpu_seconds,
+            max_snapshot_mb=args.max_snapshot_mb,
+            max_write_mb=args.max_write_mb,
             apply_fixes=args.apply,
             dry_run_fixes=not args.apply,
             github_token=os.environ.get("VCQA_GITHUB_TOKEN") or os.environ.get("GITHUB_TOKEN"),

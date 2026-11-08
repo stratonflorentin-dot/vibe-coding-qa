@@ -286,7 +286,15 @@ def coverage_gaps(result: ScanResult) -> list[str]:
     # Add test execution status to gaps
     test_status = result.tests.get("status")
     test_mode = result.tests.get("execution_mode")
-    if test_status == "skip" and test_mode in ("disabled", "blocked_no_permission", "no_runner"):
-        gaps.append(f"Tests not executed: {test_mode}. Use --explicit-permission to run tests.")
+    test_reason = result.tests.get("test_reason")
+    if test_status == "skip":
+        if test_reason in ("all_tests_skipped", "zero_tests_discovered"):
+            gaps.append(f"Tests not verified: no test executed ({test_reason}).")
+        elif test_reason == "no_recognizable_results":
+            gaps.append("Tests not verified: the runner output could not be recognized.")
+        elif test_mode == "test_infrastructure_unavailable":
+            gaps.append("Tests not verified: required dependencies are unavailable in the sandbox image.")
+        else:
+            gaps.append(f"Tests not executed: {test_mode}. Use --explicit-permission to run tests.")
 
     return gaps

@@ -196,6 +196,154 @@ def _test_image(command: list[str], configured: str | None) -> str:
     return image
 
 
+def _empty_counts() -> dict[str, int | None]:
+    return {"discovered": None, "executed": None, "passed": None, "failed": None, "skipped": None, "errors": None}
+
+
+def _normalized_counts(discovered, passed, failed, skipped, errors) -> dict[str, int]:
+    passed = int(passed or 0)
+    failed = int(failed or 0)
+    skipped = int(skipped or 0)
+    errors = int(errors or 0)
+    executed = passed + failed + errors
+    discovered = int(discovered if discovered is not None else executed + skipped)
+    if discovered < executed + skipped:
+        discovered = executed + skipped
+    return {
+        "discovered": discovered,
+        "executed": executed,
+        "passed": passed,
+        "failed": failed,
+        "skipped": skipped,
+        "errors": errors,
+    }
+
+
+def _parse_unittest_output(output: str) -> dict[str, int] | None:
+    match = re.search(r"Ran (\d+) tests? in", output)
+    if not match:
+        return None
+    discovered = int(match.group(1))
+    failed = errors = skipped = 0
+    failed_header = re.search(r"FAILED \(([^)]*)\)", output)
+    if failed_header:
+        body = failed_header.group(1)
+        failure_match = re.search(r"failures=(\d+)", body)
+        error_match = re.search(r"errors=(\d+)", body)
+        skip_match = re.search(r"skipped=(\d+)", body)
+        failed = int(failure_match.group(1)) if failure_match else 0
+        errors = int(error_match.group(1)) if error_match else 0
+        skipped = int(skip_match.group(1)) if skip_match else 0
+    else:
+        ok_match = re.search(r"^OK(?: \(([^)]*)\))?", output, re.MULTILINE)
+        if ok_match and ok_match.group(1):
+            skip_match = re.search(r"skipped=(\d+)", ok_match.group(1))
+            if skip_match:
+                skipped = int(skip_match.group(1))
+    passed = max(0, discovered - skipped - failed - errors)
+    return _normalized_counts(discovered, passed, failed, skipped, errors)
+
+
+def _parse_pytest_output(output: str) -> dict[str, int] | None:
+    # Require a pytest-specific signal so Jest/Vitest summaries do not match.
+    no_tests = re.search(r"no tests ran in \d+\.\d+s", output, re.IGNORECASE)
+    collected = re.search(r"collected (\d+) item", output)
+    summary = re.search(
+        r"(?m)^[=\s]*(?:\d+ (?:passed|failed|errors?|skipped|xfailed|xpassed|warnings?|deselected)[,\s]*)+in \d+\.\d+s",
+        output,
+    )
+    if not (no_tests or collected or summary):
+        return None
+
+    def grab(label: str) -> int:
+        found = re.search(r"(\d+) " + label + r"\b", output)
+        return int(found.group(1)) if found else 0
+
+    passed = grab("passed")
+    failed = grab("failed")
+    skipped = grab("skipped")
+    errors = grab("errors") or grab("error")
+    discovered = passed + failed + errors + skipped
+    if collected:
+        discovered = max(discovered, int(collected.group(1)))
+    return _normalized_counts(discovered, passed, failed, skipped, errors)
+
+
+def _parse_jest_output(output: str) -> dict[str, int] | None:
+    match = re.search(r"^Tests:\s*(.+)$", output, re.MULTILINE)
+    if not match:
+        return None
+    line = match.group(1)
+
+    def grab(label: str) -> int:
+        found = re.search(r"(\d+) " + label + r"\b", line)
+        return int(found.group(1)) if found else 0
+
+    failed = grab("failed")
+    passed = grab("passed")
+    skipped = grab("skipped")
+    todo = grab("todo")
+    total_match = re.search(r"(\d+) total", line)
+    discovered = int(total_match.group(1)) if total_match else passed + failed + skipped + todo
+    return _normalized_counts(discovered, passed, failed, skipped, 0)
+
+
+def _parse_vitest_output(output: str) -> dict[str, int] | None:
+    match = re.search(r"^\s*Tests\s+(.+)$", output, re.MULTILINE)
+    if not match:
+        return None
+    line = match.group(1)
+
+    def grab(label: str) -> int:
+        found = re.search(r"(\d+) " + label + r"\b", line)
+        return int(found.group(1)) if found else 0
+
+    failed = grab("failed")
+    passed = grab("passed")
+    skipped = grab("skipped")
+    if not (failed or passed or skipped):
+        return None
+    total_match = re.search(r"\((\d+)\)", line)
+    discovered = int(total_match.group(1)) if total_match else passed + failed + skipped
+    return _normalized_counts(discovered, passed, failed, skipped, 0)
+
+
+_TEST_OUTPUT_PARSERS = (
+    ("unittest", _parse_unittest_output),
+    ("pytest", _parse_pytest_output),
+    ("jest", _parse_jest_output),
+    ("vitest", _parse_vitest_output),
+)
+
+
+def classify_test_results(output: str, returncode: int) -> dict:
+    """Classify a test run from its output and exit code.
+
+    Returns a normalized structure with ``status``, ``reason``, ``runner`` and
+    ``counts``. A zero exit code alone never yields PASS: verified results must
+    be recognised from the runner output.
+    """
+    for runner, parser in _TEST_OUTPUT_PARSERS:
+        counts = parser(output)
+        if counts is None:
+            continue
+        failed = counts["failed"] or 0
+        errors = counts["errors"] or 0
+        discovered = counts["discovered"] or 0
+        executed = counts["executed"] or 0
+        if failed or errors:
+            return {"status": Status.FAIL, "reason": "tests_failed", "runner": runner, "counts": counts}
+        if discovered == 0:
+            return {"status": Status.SKIP, "reason": "zero_tests_discovered", "runner": runner, "counts": counts}
+        if executed == 0:
+            return {"status": Status.SKIP, "reason": "all_tests_skipped", "runner": runner, "counts": counts}
+        if returncode != 0:
+            return {"status": Status.FAIL, "reason": "non_zero_exit", "runner": runner, "counts": counts}
+        return {"status": Status.PASS, "reason": "tests_passed", "runner": runner, "counts": counts}
+    return {"status": Status.SKIP, "reason": "no_recognizable_results", "runner": None, "counts": _empty_counts()}
+
+
+
 def run_tests(
     repo: Path,
     command: str | None = None,
@@ -383,7 +531,20 @@ def run_tests(
         "snapshot_excludes_secrets": False,
         "snapshot_max_mb": max_snapshot_mb,
         "tmp_and_shm_max_mb": max_write_mb,
+        "workspace": "tmpfs-read-write",
+        "source_mount": "read-only",
+        "workspace_max_mb": max_write_mb,
     }
+    # The original repository is never mutated: a secret-filtered snapshot is
+    # mounted read-only and copied into a size-bounded writable tmpfs workspace
+    # before the test command runs, so the suite may create temp files and build
+    # artifacts without touching the source or the read-only root filesystem.
+    inner_command = (
+        "set -e; "
+        "cp -a /vcqa-src/. /workspace/; "
+        "cd /workspace; "
+        "exec " + " ".join(shlex.quote(part) for part in cmd)
+    )
     docker_command = [
         docker, "run", "--pull=never", "--rm", "--name", container_name,
         "--network", "none",
@@ -395,14 +556,15 @@ def run_tests(
         "--cap-drop", "ALL",
         "--read-only",
         "--tmpfs", f"/tmp:rw,nosuid,nodev,size={max_write_mb - 1}m",
+        "--tmpfs", f"/workspace:rw,nosuid,nodev,size={max_write_mb}m",
         "--shm-size", "1m",
-        "--mount", f"type=bind,source={snapshot},target=/workspace,readonly",
+        "--mount", f"type=bind,source={snapshot},target=/vcqa-src,readonly",
         "--workdir", "/workspace",
         "--env", "CI=true",
         "--env", "NODE_ENV=test",
         "--env", "HOME=/tmp",
         image,
-        *cmd,
+        "sh", "-c", inner_command,
     ]
     start = time.time()
     try:
@@ -427,26 +589,47 @@ def run_tests(
             output += "\n" + result.stderr
         output = redact_secrets(output)
         summary = "Test output exceeded 1,000,000 bytes and was terminated." if output_exceeded else (output[-2000:] if len(output) > 2000 else output)
-        skipped = _count_skipped(output)
-        status = Status.FAIL if output_exceeded or result.returncode != 0 else Status.PASS
-        execution_mode = "docker_isolated"
+
         missing_infrastructure = bool(re.search(
-            r"No module named ['\"](?:pytest|unittest)['\"]|Cannot find module ['\"][^'\"]+['\"]|(?:pytest|vitest|jest): (?:not found|command not found)|executable file not found in \$PATH",
+            r"No module named ['\"]?[\w.]+['\"]?|Cannot find module ['\"][^'\"]+['\"]|(?:pytest|vitest|jest): (?:not found|command not found)|executable file not found in \$PATH",
             output, re.IGNORECASE,
         )) or result.returncode == 127
-        if status == Status.FAIL and not output_exceeded and missing_infrastructure and not re.search(r"FAILED \(failures=|\b\d+ failed\b", output):
-            status = Status.SKIP
+        real_failures = bool(re.search(r"FAILED \(failures=|\b\d+ failed\b|\b\d+ failing\b", output, re.IGNORECASE))
+        space_exceeded = bool(re.search(r"No space left on device|Disk quota exceeded", output, re.IGNORECASE))
+
+        if output_exceeded:
+            classification = {"status": Status.FAIL, "reason": "output_limit_exceeded", "runner": None, "counts": _empty_counts()}
+            execution_mode = "docker_isolated"
+        elif space_exceeded and not real_failures:
+            classification = {"status": Status.FAIL, "reason": "workspace_size_exceeded", "runner": None, "counts": _empty_counts()}
+            execution_mode = "workspace_size_exceeded"
+            summary = "The bounded writable test workspace ran out of disk space. " + summary
+        elif missing_infrastructure and not real_failures:
+            classification = {"status": Status.SKIP, "reason": "test_infrastructure_unavailable", "runner": None, "counts": _empty_counts()}
             execution_mode = "test_infrastructure_unavailable"
             summary = "Test infrastructure appears unavailable. Use a locally prepared --test-image with the necessary dependencies. " + summary
+        else:
+            classification = classify_test_results(output, result.returncode)
+            execution_mode = "docker_isolated"
+
+        counts = classification["counts"]
         return {
-            "status": status,
+            "status": classification["status"],
+            "test_reason": classification["reason"],
+            "test_runner": classification["runner"],
+            "tests_discovered": counts["discovered"],
+            "tests_executed": counts["executed"],
+            "tests_passed": counts["passed"],
+            "tests_failed": counts["failed"],
+            "tests_skipped": counts["skipped"],
+            "tests_errors": counts["errors"],
             "command": command_str,
             "returncode": result.returncode,
             "summary": summary,
             "stdout": redact_secrets(result.stdout),
             "stderr": redact_secrets(result.stderr),
             "duration_ms": duration_ms,
-            "skipped": skipped,
+            "skipped": counts["skipped"],
             "output_truncated": output_exceeded,
             "execution_mode": execution_mode,
             "resource_limits": resource_info,
@@ -511,16 +694,6 @@ def _detect_test_command(repo: Path) -> list[str] | None:
     return None
 
 
-def _count_skipped(output: str) -> int | None:
-    if not output:
-        return None
-    # pytest: "1 skipped" ; jest: "Tests: 1 skipped"
-    match = re.search(r"(\d+)\s+skipped", output, re.IGNORECASE)
-    if match:
-        return int(match.group(1))
-    return None
-
-
 def run_pipeline(
     source: str,
     *,
@@ -545,16 +718,14 @@ def run_pipeline(
         workdir = load_repository(source, token=github_token)
         result = run_scan(workdir, metadata=True)
 
+        fix_engine: FixEngine | None = None
         if dry_run_fixes or apply_fixes:
-            engine = FixEngine(workdir, dry_run=not apply_fixes)
-            engine.apply(result.findings)
-            if apply_fixes and engine.applied:
+            fix_engine = FixEngine(workdir, dry_run=not apply_fixes)
+            fix_engine.apply(result.findings)
+            if apply_fixes and fix_engine.applied:
+                # Re-scan the modified repository; verification below compares this
+                # fresh result against the pre-fix findings.
                 result = run_scan(workdir, metadata=True)
-                remaining = {(finding.rule, str(finding.file)) for finding in result.findings}
-                for change in engine.applied:
-                    finding = change["finding"]
-                    change["resolved"] = (finding["rule"], finding["file"]) not in remaining
-            result.tests["fixes"] = {"applied": engine.applied, "skipped": engine.skipped, "dry_run": engine.dry_run}
 
         ai_reviews = review_findings(workdir, result.findings, provider=get_ai_provider())
         if ai_reviews:
@@ -574,6 +745,19 @@ def run_pipeline(
                 no_execution=no_execution,
                 explicit_permission=explicit_permission,
             ))
+
+        if fix_engine is not None:
+            result.tests["fixes"] = {
+                "applied": fix_engine.applied,
+                "skipped": fix_engine.skipped,
+                "dry_run": fix_engine.dry_run,
+                # Verification requires both an applied change and a post-fix scan.
+                "verification": (
+                    fix_engine.verify(result.findings, tests=result.tests)
+                    if (apply_fixes and fix_engine.applied)
+                    else None
+                ),
+            }
 
         # Re-assess after potential fixes/tests.
         assessment = assess(result)

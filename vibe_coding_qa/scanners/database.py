@@ -7,22 +7,77 @@ from . import BaseScanner, load_ignore_patterns, is_ignored, normalize_line
 from vibe_coding_qa import Finding, Severity
 
 
+# Optional dependency. pglast provides a real PostgreSQL parser, but it is a
+# compiled, heavyweight dependency, so it is NOT required. When present it is
+# used only to validate that migrations parse; RLS extraction stays on the
+# conservative pattern matcher below and never claims to be a full parser.
+try:  # pragma: no cover - depends on the optional extra being installed
+    import pglast  # type: ignore
+
+    _PGLAST_AVAILABLE = True
+except Exception:  # pragma: no cover
+    pglast = None  # type: ignore
+    _PGLAST_AVAILABLE = False
+
+
+# A PostgreSQL identifier: either a quoted identifier (with doubled quotes) or a
+# bare identifier. Two capture groups follow: optional schema, then table name.
+_IDENT = r'(?:"(?:[^"]|"")*"|[A-Za-z_][A-Za-z0-9_$]*)'
+_SCHEMA_TABLE = rf'(?:({_IDENT})\s*\.\s*)?({_IDENT})'
+
+
 class DatabaseScanner(BaseScanner):
     module = "database"
 
     def scan(self) -> list[Finding]:
+        self.notes: list[str] = [
+            "Row Level Security analysis matches migration statements with pattern matching; "
+            "it is a conservative heuristic, not a full PostgreSQL parser.",
+        ]
+        if not _PGLAST_AVAILABLE:
+            self.notes.append(
+                "Optional 'pglast' dependency is not installed; unusual SQL constructs may not be "
+                "recognized. Install it for stricter statement validation."
+            )
         ignore = load_ignore_patterns(self.repo)
         sql_files = [p for p in self.repo.rglob("*.sql") if not is_ignored(p, self.repo, ignore)]
         sql_files.sort(key=lambda path: path.as_posix().lower())
+        if not sql_files:
+            self.notes.append("No SQL migration files were found; database RLS analysis was skipped.")
         self.tables: dict[str, tuple[Path, int]] = {}
         self.rls_tables: set[str] = set()
         self.policies: dict[str, list[tuple[Path, int, str, str]]] = {}
+        self._unsafe_files: set[Path] = set()
         for path in sql_files:
             self._scan_sql(path)
+        if self._unsafe_files:
+            names = ", ".join(sorted(p.name for p in self._unsafe_files))
+            self.notes.append(
+                f"Dynamic SQL or procedural blocks were detected in: {names}. RLS state for those "
+                "constructs cannot be determined by static pattern matching and requires manual review."
+            )
         self._check_rls_state()
         for path in self.iter_source_files((".ts", ".tsx", ".js", ".jsx", ".py", ".prisma")):
             self._scan_orm(path)
         return self.findings
+
+    @staticmethod
+    def _identifier(raw: str) -> str:
+        """Normalize a matched identifier using PostgreSQL folding rules.
+
+        Quoted identifiers keep their case and have doubled quotes collapsed;
+        unquoted identifiers fold to lower case.
+        """
+        raw = raw.strip()
+        if len(raw) >= 2 and raw.startswith('"') and raw.endswith('"'):
+            return raw[1:-1].replace('""', '"')
+        return raw.lower()
+
+    @classmethod
+    def _qualified(cls, schema: str | None, table: str) -> str:
+        schema_name = cls._identifier(schema) if schema else "public"
+        return f"{schema_name}.{cls._identifier(table)}"
+
 
     @staticmethod
     def _statements(text: str):
@@ -48,83 +103,79 @@ class DatabaseScanner(BaseScanner):
 
     def _scan_sql(self, path: Path) -> None:
         text = path.read_text(encoding="utf-8", errors="ignore")
+        if self._has_unsupported_construct(text):
+            self._unsafe_files.add(path)
+        if _PGLAST_AVAILABLE:  # pragma: no cover - optional dependency
+            try:
+                pglast.parse_sql(text)
+            except Exception:
+                self.notes.append(
+                    f"pglast could not parse {path.name}; RLS coverage for this file may be incomplete."
+                )
         for i, raw in self._statements(text):
             norm = normalize_line(raw)
 
-            # Match CREATE TABLE with optional schema qualification
+            # Match CREATE TABLE with optional schema qualifier and quoted identifiers.
             create = re.search(
-                r"create\s+table\s+(?:if\s+not\s+exists\s+)?(?:([a-zA-Z_][a-zA-Z0-9_]*)\.)?([a-zA-Z_][a-zA-Z0-9_]*)",
-                norm, re.IGNORECASE
+                rf"create\s+table\s+(?:if\s+not\s+exists\s+)?(?:only\s+)?{_SCHEMA_TABLE}",
+                norm, re.IGNORECASE | re.DOTALL
             )
             if create:
-                schema = create.group(1).lower() if create.group(1) else "public"
-                table = create.group(2).lower()
-                fq_table = f"{schema}.{table}"
+                fq_table = self._qualified(create.group(1), create.group(2))
                 self.tables.setdefault(fq_table, (path, i))
 
             drop_table = re.search(
-                r"drop\s+table\s+(?:if\s+exists\s+)?(?:([a-zA-Z_][a-zA-Z0-9_]*)\.)?([a-zA-Z_][a-zA-Z0-9_]*)",
-                norm, re.IGNORECASE
+                rf"drop\s+table\s+(?:if\s+exists\s+)?(?:only\s+)?{_SCHEMA_TABLE}",
+                norm, re.IGNORECASE | re.DOTALL
             )
             if drop_table:
-                schema = drop_table.group(1).lower() if drop_table.group(1) else "public"
-                table = drop_table.group(2).lower()
-                fq_table = f"{schema}.{table}"
+                fq_table = self._qualified(drop_table.group(1), drop_table.group(2))
                 self.tables.pop(fq_table, None)
                 self.rls_tables.discard(fq_table)
                 self.policies.pop(fq_table, None)
 
-            # Match ALTER TABLE ... ENABLE ROW LEVEL SECURITY
-            if re.search(r"alter\s+table\s+.*enable\s+row\s+level\s+security", norm, re.IGNORECASE):
-                table_match = re.search(
-                    r"alter\s+table\s+(?:([a-zA-Z_][a-zA-Z0-9_]*)\.)?([a-zA-Z_][a-zA-Z0-9_]*)",
-                    norm, re.IGNORECASE
-                )
-                if table_match:
-                    schema = table_match.group(1).lower() if table_match.group(1) else "public"
-                    table = table_match.group(2).lower()
-                    self.rls_tables.add(f"{schema}.{table}")
-            elif re.search(r"alter\s+table\s+.*disable\s+row\s+level\s+security", norm, re.IGNORECASE):
-                table_match = re.search(
-                    r"alter\s+table\s+(?:([a-zA-Z_][a-zA-Z0-9_]*)\.)?([a-zA-Z_][a-zA-Z0-9_]*)",
-                    norm, re.IGNORECASE
-                )
-                if table_match:
-                    schema = table_match.group(1).lower() if table_match.group(1) else "public"
-                    table = table_match.group(2).lower()
-                    self.rls_tables.discard(f"{schema}.{table}")
+            # ALTER TABLE ... [ENABLE|DISABLE] ROW LEVEL SECURITY (FORCE is recorded but
+            # does not by itself enable RLS, so it is intentionally not treated as enable).
+            alter = re.search(
+                rf"alter\s+table\s+(?:if\s+exists\s+)?(?:only\s+)?{_SCHEMA_TABLE}\s+(enable|disable|force)\s+row\s+level\s+security",
+                norm, re.IGNORECASE | re.DOTALL
+            )
+            if alter:
+                fq_table = self._qualified(alter.group(1), alter.group(2))
+                action = alter.group(3).lower()
+                if action == "enable":
+                    self.rls_tables.add(fq_table)
+                elif action == "disable":
+                    self.rls_tables.discard(fq_table)
 
             drop_policy = re.search(
-                r"drop\s+policy\s+(?:if\s+exists\s+)?(\S+)\s+on\s+(?:([a-zA-Z_][a-zA-Z0-9_]*)\.)?([a-zA-Z_][a-zA-Z0-9_]*)",
-                norm, re.IGNORECASE
+                rf"drop\s+policy\s+(?:if\s+exists\s+)?({_IDENT})\s+on\s+{_SCHEMA_TABLE}",
+                norm, re.IGNORECASE | re.DOTALL
             )
             if drop_policy:
-                policy_name = drop_policy.group(1).strip('"').lower()
-                schema = drop_policy.group(2).lower() if drop_policy.group(2) else "public"
-                table = drop_policy.group(3).lower()
-                fq_table = f"{schema}.{table}"
+                policy_name = self._identifier(drop_policy.group(1))
+                fq_table = self._qualified(drop_policy.group(2), drop_policy.group(3))
                 remaining = [
                     item for item in self.policies.get(fq_table, [])
-                    if item[3].strip('"').lower() != policy_name
+                    if item[3].lower() != policy_name.lower()
                 ]
                 if remaining:
                     self.policies[fq_table] = remaining
                 else:
                     self.policies.pop(fq_table, None)
 
-            # Match CREATE POLICY with optional schema qualification
+            # Match CREATE POLICY with optional schema qualifier; the full normalized
+            # statement is stored so USING / WITH CHECK / TO clauses can be inspected.
             policy = re.search(
-                r"create\s+policy\s+(\S+)\s+on\s+(?:([a-zA-Z_][a-zA-Z0-9_]*)\.)?([a-zA-Z_][a-zA-Z0-9_]*)(?:\s+for\s+(?:all|select|insert|update|delete))?",
-                norm, re.IGNORECASE
+                rf"create\s+policy\s+({_IDENT})\s+on\s+{_SCHEMA_TABLE}",
+                norm, re.IGNORECASE | re.DOTALL
             )
             if policy:
-                policy_name = policy.group(1).strip('"')
-                schema = policy.group(2).lower() if policy.group(2) else "public"
-                table = policy.group(3).lower()
-                fq_table = f"{schema}.{table}"
+                policy_name = self._identifier(policy.group(1))
+                fq_table = self._qualified(policy.group(2), policy.group(3))
                 latest = [
                     item for item in self.policies.get(fq_table, [])
-                    if item[3].strip('"').lower() != policy_name.lower()
+                    if item[3].lower() != policy_name.lower()
                 ]
                 latest.append((path, i, norm, policy_name))
                 self.policies[fq_table] = latest
@@ -140,6 +191,15 @@ class DatabaseScanner(BaseScanner):
                     suggestion="Role changes must be handled by a privileged server function, not exposed in user update paths.",
                     confidence="low",
                 )
+
+    @staticmethod
+    def _has_unsupported_construct(text: str) -> bool:
+        """Detect procedural/dynamic SQL the pattern matcher cannot reason about."""
+        return bool(re.search(
+            r"(\bdo\s+\$|\bexecute\s+(?:format\s*\()|\$\$|\blanguage\s+plpgsql\b|"
+            r"\bsecurity\s+definer\b|\bcreate\s+(?:or\s+replace\s+)?function\b)",
+            text, re.IGNORECASE,
+        ))
 
     def _check_rls_state(self) -> None:
         policies_by_table = self.policies
@@ -200,7 +260,11 @@ class DatabaseScanner(BaseScanner):
                         suggestion="Replace true with a restrictive ownership or role predicate.",
                         confidence="high",
                     )
-                if re.search(r"\bto\s+", norm_lower) is None:
+                has_role_clause = bool(re.search(
+                    r"\bto\s+(?:group\s+)?(?:\"[^\"]+\"|[a-z_][a-z0-9_]*|public|current_user|session_user)",
+                    norm_lower,
+                ))
+                if not has_role_clause:
                     self.add(
                         rule="rls-policy-missing-role-restriction",
                         severity=Severity.MEDIUM,

@@ -71,14 +71,14 @@ CREATE TABLE orders (id uuid primary key);
             if command[1:3] == ["image", "inspect"]:
                 return subprocess.CompletedProcess(command, 0, "[]", "")
             if command[1:2] == ["run"]:
-                return subprocess.CompletedProcess(command, 0, "tests passed", "")
+                return subprocess.CompletedProcess(command, 0, "Tests:       1 passed, 1 total", "")
             return subprocess.CompletedProcess(command, 0, "", "")
 
         with patch("vibe_coding_qa.engine.shutil.which", return_value="docker"), patch(
             "vibe_coding_qa.engine.subprocess.run", side_effect=fake_docker_run
         ), patch(
             "vibe_coding_qa.engine._run_bounded_process",
-            return_value=(subprocess.CompletedProcess(["docker", "run"], 0, "tests passed", ""), False, False),
+            return_value=(subprocess.CompletedProcess(["docker", "run"], 0, "Tests:       1 passed, 1 total", ""), False, False),
         ):
             result = run_tests(self.repo, explicit_permission=True)
         self.assertEqual(result["status"], "pass")

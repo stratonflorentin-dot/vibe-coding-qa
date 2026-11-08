@@ -17,6 +17,25 @@ def _value(value):
     return getattr(value, "value", value)
 
 
+_TEST_COUNT_FIELDS = (
+    ("tests_discovered", "discovered"),
+    ("tests_executed", "executed"),
+    ("tests_passed", "passed"),
+    ("tests_failed", "failed"),
+    ("tests_skipped", "skipped"),
+    ("tests_errors", "errors"),
+)
+
+
+def _test_counts(tests: dict) -> str:
+    parts = []
+    for key, label in _TEST_COUNT_FIELDS:
+        value = tests.get(key)
+        if value is not None:
+            parts.append(f"{label}={value}")
+    return ", ".join(parts)
+
+
 def markdown_report(result: ScanResult, title: str = "Vibe Coding QA Production Readiness Report") -> str:
     lines = [
         f"# {title}",
@@ -58,11 +77,16 @@ def markdown_report(result: ScanResult, title: str = "Vibe Coding QA Production 
         lines.append("## Test Results")
         lines.append("")
         lines.append(f"- Status: `{_value(result.tests.get('status', 'unknown'))}`")
+        if result.tests.get("test_reason"):
+            lines.append(f"- Classification: {result.tests['test_reason']}")
+        if result.tests.get("test_runner"):
+            lines.append(f"- Test runner: {result.tests['test_runner']}")
         lines.append(f"- Command: `{result.tests.get('command', 'N/A')}`")
         if "duration_ms" in result.tests:
             lines.append(f"- Duration: {result.tests['duration_ms']} ms")
-        if result.tests.get("skipped") is not None:
-            lines.append(f"- Skipped: {result.tests['skipped']}")
+        counts = _test_counts(result.tests)
+        if counts:
+            lines.append(f"- Counts: {counts}")
         if "summary" in result.tests:
             lines.append(f"- Summary: {result.tests['summary']}")
         lines.append("")
@@ -153,11 +177,18 @@ def html_report(result: ScanResult, title: str = "Vibe Coding QA Production Read
         )
     test_html = ""
     if result.tests:
+        counts = _test_counts(result.tests)
+        counts_html = f"<li>Counts: {_h(counts)}</li>" if counts else ""
+        reason_html = f"<li>Classification: {_h(result.tests['test_reason'])}</li>" if result.tests.get("test_reason") else ""
+        runner_html = f"<li>Test runner: {_h(result.tests['test_runner'])}</li>" if result.tests.get("test_runner") else ""
         test_html = (
             f"<h2>Test Results</h2><ul>"
             f"<li>Status: {_h(_value(result.tests.get('status', 'unknown')))}</li>"
+            f"{reason_html}"
+            f"{runner_html}"
             f"<li>Command: <code>{_h(result.tests.get('command', 'N/A'))}</code></li>"
             f"<li>Duration: {_h(result.tests.get('duration_ms', 'N/A'))} ms</li>"
+            f"{counts_html}"
             f"</ul>"
         )
     gaps = coverage_gaps(result)

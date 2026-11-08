@@ -44,7 +44,7 @@ class SecurityScanner(BaseScanner):
                     continue
             for rule, pattern, severity in SECRET_PATTERNS:
                 for match in pattern.finditer(raw):
-                    if self._is_likely_synthetic(raw, match, path, severity):
+                    if self._is_likely_synthetic(match):
                         continue
                     self.add(
                         rule=rule,
@@ -57,22 +57,101 @@ class SecurityScanner(BaseScanner):
                         confidence="high",
                     )
 
-    def _is_likely_synthetic(self, line: str, match: re.Match, path: Path, severity: Severity) -> bool:
-        """Heuristic to identify likely synthetic/test credentials based on content."""
-        matched = match.group(0)
-        lower = line.lower()
-        # Common synthetic patterns in the actual credential value or surrounding context
-        synthetic_indicators = [
-            "sample", "example", "test", "fake", "dummy", "placeholder",
-            "not-real", "not_real", "notreal", "demo", "mock", "fixture",
-            "your-key", "your_key", "yourkey", "insert-key", "insert_key",
-            "replace-me", "replace_me", "changeme", "change-me", "changeme",
-            "xxx", "yyy", "zzz", "abcdef", "secret123", "password123",
-        ]
-        for indicator in synthetic_indicators:
-            if indicator in lower:
-                return True
-        return False
+    @staticmethod
+    def _credential_value(match: re.Match) -> str:
+        """Extract only the credential literal from a match.
+
+        Assignment patterns such as ``api_key = "value"`` match the whole
+        statement; the surrounding variable name must never influence the
+        synthetic/placeholder decision, so only the value portion is returned.
+        For bare-token rules (``sk-...``) the match itself is the value.
+        """
+        text = match.group(0)
+        quoted = re.search(r"['\"]([^'\"]+)['\"]", text)
+        if quoted:
+            return quoted.group(1)
+        assignment = re.match(r"[A-Za-z0-9_\-.]+\s*[:=]\s*(.+)$", text)
+        if assignment:
+            return assignment.group(1).strip().strip("'\"")
+        return text
+
+    #: Values that are placeholders whenever they appear verbatim as the credential.
+    _PLACEHOLDER_LITERALS = {
+        "test", "tests", "example", "sample", "demo", "dummy", "fake", "mock",
+        "placeholder", "changeme", "change-me", "change_me", "replace-me",
+        "replace_me", "your-key", "your_key", "yourkey", "your-api-key-here",
+        "your-api-key", "your_api_key", "your-secret", "your_secret",
+        "your-token", "your_token", "insert-key", "insert_key", "your_key_here",
+        "secret", "password", "token", "apikey", "api-key", "none", "null",
+        "undefined", "todo", "fixme",
+    }
+
+    #: Unambiguous substrings that only make sense inside a placeholder value.
+    _PLACEHOLDER_SUBSTRINGS = (
+        "not-real", "not_real", "notreal",
+        "replace-me", "replace_me", "replaceme",
+        "change-me", "change_me", "changeme", "changeit",
+        "your-api-key", "your_api_key", "yourapikey",
+        "your-secret", "your_secret", "yoursecret",
+        "your-token", "your_token", "yourtoken",
+        "insert-your", "insert_your",
+        "insert-key", "insert_key",
+        "placeholder",
+        "example-key", "sample-key", "test-key", "dummy-key", "fake-key",
+        "mock-key", "example_key", "sample_key", "test_key",
+    )
+
+    #: Standalone tokens that mark a value as an obvious placeholder.
+    _PLACEHOLDER_TOKENS = {
+        "example", "sample", "dummy", "fake", "mock", "placeholder",
+        "changeme", "notreal", "yourkey",
+    }
+
+    @classmethod
+    def _placeholder_reason(cls, value: str) -> str | None:
+        """Return a human-readable reason when ``value`` is clearly synthetic.
+
+        Recognition is deliberately narrow and operates only on the credential
+        value. A *variable name* containing ``TEST``, ``EXAMPLE`` or ``MOCK``
+        must never suppress detection, and a real token that merely contains the
+        substring ``test`` must still be reported.
+        """
+        if not value or not value.strip():
+            return "empty value"
+        lowered = value.strip().strip("'\"")
+        if not lowered:
+            return "empty value"
+        lowered = lowered.lower()
+
+        if lowered in cls._PLACEHOLDER_LITERALS:
+            return "known placeholder literal"
+        if lowered.startswith("<") and lowered.endswith(">"):
+            return "angle-bracket placeholder"
+        if lowered in {"*" * len(lowered), "x" * len(lowered)}:
+            return "masked placeholder"
+        if re.fullmatch(r"(abcdef)+", lowered):
+            return "sequential placeholder"
+        if re.search(r"x{4,}", lowered):
+            return "repeated placeholder character"
+        if len(set(lowered)) == 1 and len(lowered) >= 4:
+            return "single repeated character"
+        for indicator in cls._PLACEHOLDER_SUBSTRINGS:
+            if indicator in lowered:
+                return f"placeholder marker '{indicator}'"
+        tokens = [token for token in re.split(r"[^a-z0-9]+", lowered) if token]
+        for token in tokens:
+            if token in cls._PLACEHOLDER_TOKENS:
+                return f"placeholder token '{token}'"
+        return None
+
+    @classmethod
+    def _is_likely_synthetic(cls, match: re.Match) -> bool:
+        """Decide whether a matched credential is a synthetic placeholder.
+
+        Only the matched credential value is inspected; surrounding source text
+        (variable names, comments, file paths) is intentionally ignored.
+        """
+        return cls._placeholder_reason(cls._credential_value(match)) is not None
 
     def _scan_for_insecure_eval(self, path: Path) -> None:
         text = path.read_text(encoding="utf-8", errors="ignore")
@@ -97,7 +176,7 @@ class SecurityScanner(BaseScanner):
                 if severity != Severity.CRITICAL:
                     continue
                 for match in pattern.finditer(raw):
-                    if self._is_likely_synthetic(raw, match, path, severity):
+                    if self._is_likely_synthetic(match):
                         continue
                     self.add(
                         rule="client-side-secret",
