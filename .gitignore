@@ -21,3 +21,6 @@ test_scan*.py
 test_vuln.py
 commit_msg*.txt
 *.zip
+
+# Local launcher secrets (holds the AI API key) - never commit
+vcqa.local.ps1
