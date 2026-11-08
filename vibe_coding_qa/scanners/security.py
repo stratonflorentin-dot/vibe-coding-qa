@@ -36,19 +36,15 @@ class SecurityScanner(BaseScanner):
         return self.findings
 
     def _scan_for_secrets(self, path: Path) -> None:
-        # Test and fixture files frequently contain fake sample secrets; skip them to reduce noise.
-        if is_test_or_fixture(path):
-            return
         lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
         for i, raw in enumerate(lines, 1):
             line = raw.strip()
             if line.startswith("//") or line.startswith("#"):
-                # Reduce noise for example comments, but still flag private keys.
                 if "PRIVATE KEY" not in line.upper():
                     continue
             for rule, pattern, severity in SECRET_PATTERNS:
                 for match in pattern.finditer(raw):
-                    if is_test_or_fixture(path) and severity != Severity.CRITICAL:
+                    if self._is_likely_synthetic(raw, match, path, severity):
                         continue
                     self.add(
                         rule=rule,
@@ -60,6 +56,23 @@ class SecurityScanner(BaseScanner):
                         suggestion="Move secrets to environment variables or a vault; never commit keys.",
                         confidence="high",
                     )
+
+    def _is_likely_synthetic(self, line: str, match: re.Match, path: Path, severity: Severity) -> bool:
+        """Heuristic to identify likely synthetic/test credentials based on content."""
+        matched = match.group(0)
+        lower = line.lower()
+        # Common synthetic patterns in the actual credential value or surrounding context
+        synthetic_indicators = [
+            "sample", "example", "test", "fake", "dummy", "placeholder",
+            "not-real", "not_real", "notreal", "demo", "mock", "fixture",
+            "your-key", "your_key", "yourkey", "insert-key", "insert_key",
+            "replace-me", "replace_me", "changeme", "change-me", "changeme",
+            "xxx", "yyy", "zzz", "abcdef", "secret123", "password123",
+        ]
+        for indicator in synthetic_indicators:
+            if indicator in lower:
+                return True
+        return False
 
     def _scan_for_insecure_eval(self, path: Path) -> None:
         text = path.read_text(encoding="utf-8", errors="ignore")
@@ -84,6 +97,8 @@ class SecurityScanner(BaseScanner):
                 if severity != Severity.CRITICAL:
                     continue
                 for match in pattern.finditer(raw):
+                    if self._is_likely_synthetic(raw, match, path, severity):
+                        continue
                     self.add(
                         rule="client-side-secret",
                         severity=Severity.CRITICAL,

@@ -627,6 +627,109 @@ class AIProviderTests(TestCase):
         self.assertIn("[REDACTED]", transmitted)
 
 
+class SecretDetectionTests(TestCase):
+    def test_real_credential_in_test_file_is_detected(self):
+        """Real credentials in test files should be flagged, not ignored."""
+        repo = Path(tempfile.mkdtemp(prefix="vcqa-secret-test-"))
+        try:
+            (repo / "tests").mkdir()
+            # Real-looking credential in test file
+            (repo / "tests" / "test_auth.py").write_text(
+                'API_KEY = "sk-123456789012345678901234"\n', encoding="utf-8"
+            )
+            result = run_scan(repo)
+            rules = {f.rule for f in result.findings}
+            self.assertIn("security:generic-api-key", rules)
+        finally:
+            shutil.rmtree(repo, ignore_errors=True)
+
+    def test_synthetic_credential_in_test_file_is_filtered(self):
+        """Synthetic/test credentials in test files should be filtered."""
+        repo = Path(tempfile.mkdtemp(prefix="vcqa-secret-synthetic-"))
+        try:
+            (repo / "tests").mkdir()
+            # Synthetic credential with "sample" indicator
+            (repo / "tests" / "test_auth.py").write_text(
+                'API_KEY = "sample-key-not-real"\n', encoding="utf-8"
+            )
+            result = run_scan(repo)
+            rules = {f.rule for f in result.findings}
+            self.assertNotIn("security:generic-api-key", rules)
+        finally:
+            shutil.rmtree(repo, ignore_errors=True)
+
+    def test_real_credential_in_fixture_file_is_detected(self):
+        """Real credentials in fixture files should be flagged."""
+        repo = Path(tempfile.mkdtemp(prefix="vcqa-secret-fixture-"))
+        try:
+            (repo / "fixtures").mkdir()
+            (repo / "fixtures" / "config.json").write_text(
+                '{"api_key": "ghp_12345678901234567890123456789012345678"}\n', encoding="utf-8"
+            )
+            result = run_scan(repo)
+            rules = {f.rule for f in result.findings}
+            # ghp_ tokens match github-token pattern
+            self.assertIn("security:github-token", rules)
+        finally:
+            shutil.rmtree(repo, ignore_errors=True)
+
+    def test_synthetic_credential_in_fixture_file_is_filtered(self):
+        """Synthetic credentials in fixture files should be filtered."""
+        repo = Path(tempfile.mkdtemp(prefix="vcqa-secret-fixture-synth-"))
+        try:
+            (repo / "fixtures").mkdir()
+            (repo / "fixtures" / "config.json").write_text(
+                '{"api_key": "your-api-key-here"}\n', encoding="utf-8"
+            )
+            result = run_scan(repo)
+            rules = {f.rule for f in result.findings}
+            self.assertNotIn("security:generic-api-key", rules)
+        finally:
+            shutil.rmtree(repo, ignore_errors=True)
+
+    def test_critical_patterns_still_flagged_in_test_files(self):
+        """Private keys and other CRITICAL patterns should still be flagged in test files."""
+        repo = Path(tempfile.mkdtemp(prefix="vcqa-secret-critical-"))
+        try:
+            (repo / "tests").mkdir()
+            pem = "-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA...\n-----END RSA PRIVATE KEY-----"
+            (repo / "tests" / "test_crypto.py").write_text(pem, encoding="utf-8")
+            result = run_scan(repo)
+            rules = {f.rule for f in result.findings}
+            self.assertIn("security:private-key", rules)
+        finally:
+            shutil.rmtree(repo, ignore_errors=True)
+
+    def test_client_side_secret_detection_respects_synthetic_heuristic(self):
+        """Client-side secret detection should filter synthetic credentials."""
+        repo = Path(tempfile.mkdtemp(prefix="vcqa-client-secret-"))
+        try:
+            (repo / "src").mkdir()
+            # Synthetic in client file
+            (repo / "src" / "client.ts").write_text(
+                'const API_KEY = "sample-key-not-real";\n', encoding="utf-8"
+            )
+            result = run_scan(repo)
+            rules = {f.rule for f in result.findings}
+            self.assertNotIn("security:client-side-secret", rules)
+        finally:
+            shutil.rmtree(repo, ignore_errors=True)
+
+    def test_real_client_side_secret_still_flagged(self):
+        """Real credentials in client files should still be flagged."""
+        repo = Path(tempfile.mkdtemp(prefix="vcqa-client-real-"))
+        try:
+            (repo / "src").mkdir()
+            (repo / "src" / "client.ts").write_text(
+                'const OPENAI_KEY = "sk-123456789012345678901234";\n', encoding="utf-8"
+            )
+            result = run_scan(repo)
+            rules = {f.rule for f in result.findings}
+            self.assertIn("security:client-side-secret", rules)
+        finally:
+            shutil.rmtree(repo, ignore_errors=True)
+
+
 class GitCredentialTests(TestCase):
     def test_clone_never_passes_token_in_args_or_environment_and_cleans_files(self):
         token = "ghp_super-secret-token-value"

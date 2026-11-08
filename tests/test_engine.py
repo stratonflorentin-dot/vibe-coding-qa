@@ -21,7 +21,7 @@ class EngineTests(TestCase):
         (self.repo / "src").mkdir()
         (self.repo / "package.json").write_text('{"name":"sample","scripts":{"test":"exit 0"}}')
         (self.repo / "src" / "client.ts").write_text("""
-const API_KEY = "sample-key-not-real";
+const API_KEY = "sk-123456789012345678901234";
 console.log("debug");
 function submit() { eval(userInput); }
 """)
@@ -37,7 +37,8 @@ CREATE TABLE orders (id uuid primary key);
     def test_scan_detects_client_secret_and_missing_rls(self):
         result = run_scan(self.repo)
         rules = {f.rule for f in result.findings}
-        self.assertIn("security:generic-api-key", rules)
+        # Real-looking credential should be detected
+        self.assertIn("security:openai-key", rules)
         self.assertIn("database:table-without-rls", rules)
         self.assertTrue(result.release_blocked)
 
