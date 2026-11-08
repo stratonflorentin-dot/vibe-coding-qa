@@ -11,6 +11,7 @@ import threading
 import time
 import uuid
 from pathlib import Path
+from typing import Any, Callable
 
 from . import ModuleResult, ScanResult, Severity, Status
 from .ai_review import get_ai_provider, review_findings
@@ -39,23 +40,54 @@ SCANNERS = [
 ]
 
 
-def run_scan(repo: Path, metadata: bool = False) -> ScanResult:
-    modules: list[ModuleResult] = []
+ProgressCallback = Callable[[str, str, str, dict], None]
+
+
+def _emit(progress: "ProgressCallback | None", stage: str, status: str, message: str = "", data: dict | None = None) -> None:
+    """Report a real scan stage to an optional progress callback.
+
+    The observer is best-effort: a failing callback must never break a scan.
+    """
+    if progress is None:
+        return
+    try:
+        progress(stage, status, message, data or {})
+    except Exception:
+        pass
+
+
+def run_scan(
+    repo: Path,
+    metadata: bool = False,
+    progress: "ProgressCallback | None" = None,
+    modules: list[str] | None = None,
+    minimum_score: int | None = None,
+) -> ScanResult:
+    _emit(progress, "preparation", "running", "Preparing repository for analysis")
+    selected = set(modules) if modules is not None else None
+    result_modules: list[ModuleResult] = []
     for scanner_cls in SCANNERS:
+        if selected is not None and scanner_cls.module not in selected:
+            _emit(progress, "scanner", "skipped", f"{scanner_cls.module} analysis skipped by scan profile", {"module": scanner_cls.module})
+            continue
         scanner = scanner_cls(repo)
+        _emit(progress, "scanner", "running", f"Running {scanner.module} analysis", {"module": scanner.module})
         findings = scanner.scan()
-        modules.append(ModuleResult(
+        result_modules.append(ModuleResult(
             module=scanner.module,
             status=Status.PASS,
             score=100.0,
             findings=findings,
             notes=getattr(scanner, "notes", []),
         ))
-    result = ScanResult(repo=repo, modules=modules)
-    assess(result)
+        _emit(progress, "scanner", "completed", f"{scanner.module} analysis complete", {"module": scanner.module, "findings": len(findings)})
+    result = ScanResult(repo=repo, modules=result_modules)
+    assess(result, minimum_score=minimum_score)
     if metadata:
+        _emit(progress, "technology", "running", "Detecting technology stack and architecture")
         result.tests["repo_metadata"] = repo_metadata(repo)
         result.tests["architecture"] = analyze_repo(repo).to_dict()
+        _emit(progress, "technology", "completed", "Technology detection complete")
     return result
 
 
@@ -728,11 +760,20 @@ def run_pipeline(
     max_snapshot_mb: int = 256,
     max_write_mb: int = 64,
     keep_clone: bool = False,
+    progress: "ProgressCallback | None" = None,
+    modules: list[str] | None = None,
+    minimum_score: int | None = None,
+    ai_review_enabled: bool | None = None,
 ) -> ScanResult:
     workdir: Path | None = None
     try:
+        _emit(progress, "preparation", "running", "Loading repository")
         workdir = load_repository(source, token=github_token)
-        result = run_scan(workdir, metadata=True)
+        _emit(progress, "preparation", "completed", "Repository ready")
+        result = run_scan(
+            workdir, metadata=True, progress=progress, modules=modules,
+            minimum_score=minimum_score,
+        )
 
         fix_engine: FixEngine | None = None
         if dry_run_fixes or apply_fixes:
@@ -741,13 +782,26 @@ def run_pipeline(
             if apply_fixes and fix_engine.applied:
                 # Re-scan the modified repository; verification below compares this
                 # fresh result against the pre-fix findings.
-                result = run_scan(workdir, metadata=True)
+                _emit(progress, "fixes", "running", "Re-scanning after applying fixes")
+                result = run_scan(
+                    workdir, metadata=True, progress=progress, modules=modules,
+                    minimum_score=minimum_score,
+                )
 
-        ai_reviews = review_findings(workdir, result.findings, provider=get_ai_provider())
+        _emit(progress, "ai", "running", "AI review (optional)")
+        ai_reviews = (
+            review_findings(workdir, result.findings, provider=get_ai_provider())
+            if ai_review_enabled is not False
+            else []
+        )
         if ai_reviews:
             result.tests["ai_reviews"] = ai_reviews
+            _emit(progress, "ai", "completed", f"AI review produced {len(ai_reviews)} review(s)")
+        else:
+            _emit(progress, "ai", "skipped", "AI review not configured or not applicable")
 
         if run_tests_flag:
+            _emit(progress, "tests", "running", "Running tests in the isolated sandbox")
             result.tests.update(run_tests(
                 workdir,
 
@@ -761,6 +815,10 @@ def run_pipeline(
                 no_execution=no_execution,
                 explicit_permission=explicit_permission,
             ))
+            _emit(
+                progress, "tests", "completed", "Test execution finished",
+                {"status": str(result.tests.get("status", ""))},
+            )
 
         if fix_engine is not None:
             result.tests["fixes"] = {
@@ -776,13 +834,16 @@ def run_pipeline(
             }
 
         # Re-assess after potential fixes/tests.
-        assessment = assess(result)
+        _emit(progress, "gate", "running", "Assessing release gate")
+        assessment = assess(result, minimum_score=minimum_score)
         result._assessment = assessment
 
         if output_dir:
+            _emit(progress, "report", "running", "Writing reports")
             from .reporters import write_reports
             write_reports(result, Path(output_dir))
 
+        _emit(progress, "gate", "completed", f"Release gate: {assessment.get('gate', 'unknown')}", {"gate": assessment.get("gate")})
         return result
     finally:
         if workdir and not keep_clone and str(workdir) != str(Path(source).resolve()):

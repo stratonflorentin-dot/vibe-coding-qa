@@ -1,0 +1,145 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 224 71% 4%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 224 71% 4%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 224 71% 4%;
+
+    --primary: 199 89% 48%;
+    --primary-foreground: 210 20% 98%;
+
+    --secondary: 220 14% 96%;
+    --secondary-foreground: 220 9% 20%;
+
+    --muted: 220 14% 96%;
+    --muted-foreground: 220 9% 46%;
+
+    --accent: 220 14% 96%;
+    --accent-foreground: 220 9% 20%;
+
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 210 20% 98%;
+
+    --border: 220 13% 91%;
+    --input: 220 13% 91%;
+    --ring: 199 89% 48%;
+
+    --sidebar: 220 20% 98%;
+    --sidebar-foreground: 224 71% 4%;
+    --sidebar-accent: 220 14% 94%;
+    --sidebar-accent-foreground: 224 71% 4%;
+    --sidebar-border: 220 13% 91%;
+
+    --severity-critical: 0 72% 51%;
+    --severity-high: 21 90% 48%;
+    --severity-medium: 38 92% 50%;
+    --severity-low: 199 89% 48%;
+    --severity-info: 220 9% 46%;
+
+    --gate-pass: 142 71% 45%;
+    --gate-fail: 0 72% 51%;
+    --gate-block: 38 92% 50%;
+    --gate-unknown: 220 9% 46%;
+
+    --radius: 0.65rem;
+
+    --font-sans: "Inter", ui-sans-serif, system-ui;
+    --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular;
+  }
+
+  .dark {
+    --background: 224 71% 4%;
+    --foreground: 210 20% 98%;
+
+    --card: 224 47% 8%;
+    --card-foreground: 210 20% 98%;
+
+    --popover: 224 47% 8%;
+    --popover-foreground: 210 20% 98%;
+
+    --primary: 199 89% 55%;
+    --primary-foreground: 210 20% 98%;
+
+    --secondary: 222 33% 14%;
+    --secondary-foreground: 210 20% 98%;
+
+    --muted: 222 33% 14%;
+    --muted-foreground: 218 11% 65%;
+
+    --accent: 222 33% 16%;
+    --accent-foreground: 210 20% 98%;
+
+    --destructive: 0 63% 50%;
+    --destructive-foreground: 210 20% 98%;
+
+    --border: 222 28% 18%;
+    --input: 222 28% 20%;
+    --ring: 199 89% 55%;
+
+    --sidebar: 224 55% 6%;
+    --sidebar-foreground: 210 20% 96%;
+    --sidebar-accent: 222 33% 14%;
+    --sidebar-accent-foreground: 210 20% 98%;
+    --sidebar-border: 222 28% 16%;
+
+    --severity-critical: 0 72% 58%;
+    --severity-high: 24 90% 55%;
+    --severity-medium: 38 92% 55%;
+    --severity-low: 199 89% 55%;
+    --severity-info: 218 11% 62%;
+
+    --gate-pass: 142 65% 48%;
+    --gate-fail: 0 72% 58%;
+    --gate-block: 38 92% 55%;
+    --gate-unknown: 218 11% 62%;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    @apply rounded-full border-2 border-solid border-transparent bg-muted-foreground/25 bg-clip-content;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-muted-foreground/40 bg-clip-content;
+  }
+}
+
+@layer components {
+  /* A soft page background used behind the app shell. */
+  .app-gradient {
+    background-image:
+      radial-gradient(at 0% 0%, hsl(var(--primary) / 0.08) 0px, transparent 55%),
+      radial-gradient(at 100% 0%, hsl(var(--severity-low) / 0.06) 0px, transparent 45%);
+  }
+}

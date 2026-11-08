@@ -14,6 +14,46 @@ To add it to another project, copy the `vibe-coding-qa` folder into that project
 
 [Download the skill bundle](https://github.com/stratonflorentin-dot/vibe-coding-qa/raw/refs/heads/main/vibe-coding-qa.zip)
 
+## Local Dashboard (v0.5.0)
+
+The optional dashboard runs the existing Python scanning engine through a local FastAPI API and a React interface. The CLI remains usable without installing dashboard dependencies.
+
+Install the backend extras from the repository root:
+
+```powershell
+python -m pip install -r requirements-dashboard.txt
+```
+
+Start the API in one terminal:
+
+```powershell
+python -m dashboard.backend
+```
+
+In a second terminal, install and start the frontend:
+
+```powershell
+cd dashboard/frontend
+npm ci
+npm run dev
+```
+
+Open `http://127.0.0.1:5173`. The API is available at `http://127.0.0.1:8756/api/docs`. The default repository allowlist includes the current user's home directory and this project; set `VCQA_ALLOWED_REPO_ROOTS` to add other approved roots. The backend refuses non-loopback bind hosts because remote access has no authentication layer.
+
+AI is optional. Configure credentials in the backend process environment before starting it; they are never submitted from the browser or stored in SQLite:
+
+```powershell
+$env:VCQA_AI_PROVIDER = 'openrouter'
+$env:VCQA_AI_API_KEY = 'your-server-side-key'
+$env:VCQA_AI_BASE_URL = 'https://openrouter.ai/api/v1'
+$env:VCQA_AI_MODEL = 'openai/gpt-3.5-turbo'
+python -m dashboard.backend
+```
+
+Scans persist in `dashboard/data/vcqa.sqlite3`. Docker test execution is disabled by default and requires both operator enablement in Settings and explicit per-scan permission. The backend never pulls images or installs repository dependencies.
+
+The dashboard includes persisted overview metrics, repositories, real scan jobs and SSE events, scan comparison, findings and triage, static architecture and dependency views, AI chat/reviews/remediation proposals, reports, and scan/AI settings. Limitations: architecture relationships are static-analysis evidence rather than a runtime graph; reports can be printed to PDF by the browser but do not currently have server-side PDF generation; GitHub pull-request/CI integrations, SARIF export, authentication, and verified post-patch rescan workflows are not implemented. AI output remains advisory and never controls the release gate.
+
 ## What it helps with
 
 - **Product intelligence:** research product ideas, markets, competitors, customer pain, feasibility, and MVP strategy before investing in a build.

@@ -4,6 +4,7 @@ This scanner performs local checks and optional, explicit OSV lookups.
 Findings are labeled as 'heuristic' or 'verified' based on available evidence.
 """
 
+import contextvars
 import json
 import os
 import re
@@ -21,10 +22,43 @@ _OSV_ENDPOINT = "https://api.osv.dev/v1/query"
 # Process-level cache: (ecosystem, name, version) -> (expiry_monotonic, advisories).
 _OSV_CACHE: dict[tuple[str, str, str], tuple[float, list[dict]]] = {}
 
+# Per-context override of the OSV switch. The dashboard runs scans in worker
+# threads; a ContextVar keeps each scan's decision isolated instead of mutating
+# the global environment (which concurrent scans would race on).
+_OSV_OVERRIDE: contextvars.ContextVar[bool | None] = contextvars.ContextVar("vcqa_osv_override", default=None)
+
+
+def set_osv_enabled(enabled: bool | None) -> contextvars.Token:
+    """Override the OSV switch for the current context; returns a reset token."""
+    return _OSV_OVERRIDE.set(enabled)
+
+
+def reset_osv_enabled(token: contextvars.Token) -> None:
+    _OSV_OVERRIDE.reset(token)
+
+
+def osv_enabled() -> bool:
+    override = _OSV_OVERRIDE.get()
+    if override is not None:
+        return override
+    return os.environ.get("VCQA_OSV_ENABLED", "0").lower() in ("1", "true", "yes")
+
 
 def clear_osv_cache() -> None:
     """Clear the OSV response cache (used by tests and long-running callers)."""
     _OSV_CACHE.clear()
+
+
+def resolved_dependencies(repo: Path) -> list[tuple[str, str, str, Path]]:
+    """Public wrapper: the resolved (ecosystem, name, version, lockfile) list."""
+    return DependencyScanner(Path(repo))._resolved_dependencies()
+
+
+def osv_lookup(ecosystem: str, name: str, version: str, timeout: float = 8.0) -> list[dict]:
+    """Public wrapper: query OSV for advisories affecting one resolved package."""
+    scanner = DependencyScanner(Path("."))
+    scanner._OSV_FETCH_TIMEOUT = timeout
+    return scanner._osv_lookup(ecosystem, name, version)
 
 
 class DependencyScanner(BaseScanner):
@@ -96,7 +130,7 @@ class DependencyScanner(BaseScanner):
         return self.findings
 
     def _scan_osv(self) -> None:
-        if os.environ.get("VCQA_OSV_ENABLED", "0").lower() not in ("1", "true", "yes"):
+        if not osv_enabled():
             self.notes.append("OSV lookups are disabled; dependency findings are based on local heuristics only.")
             return
         dependencies = self._resolved_dependencies()

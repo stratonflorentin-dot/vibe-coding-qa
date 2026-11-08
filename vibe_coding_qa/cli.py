@@ -5,6 +5,7 @@ import os
 import sys
 from pathlib import Path
 
+from . import __version__
 from .engine import run_pipeline
 from .gates import release_decision
 
@@ -14,7 +15,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="vibe-coding-qa",
         description="Automated Vibe Coding QA and production-readiness engineering tool.",
     )
-    parser.add_argument("--version", action="version", version="vibe-coding-qa 0.4.0")
+    parser.add_argument("--version", action="version", version=f"vibe-coding-qa {__version__}")
     sub = parser.add_subparsers(dest="command", required=True)
 
     scan = sub.add_parser("scan", help="Scan a repository and generate reports.")

@@ -11,6 +11,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
+__version__ = "0.5.0"
+
 
 class Severity(str, Enum):
     CRITICAL = "critical"

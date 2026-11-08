@@ -2,6 +2,21 @@
 
 All notable changes to the Vibe Coding QA engine are documented here.
 
+## [0.5.0] - 2026-11-08
+
+### Dashboard
+
+- Added an optional FastAPI and SQLite dashboard backend that reuses the existing Python scan engine, persists scan history, exposes OpenAPI documentation, and streams actual scan events over SSE.
+- Added a React, TypeScript, Vite, Tailwind, and Recharts frontend with repository management, overview analytics, scan workflows and comparisons, finding triage/details, architecture and dependency views, AI assistance, remediation review, reports, and settings.
+- Added named scan profiles that select real scanner modules and release-gate score thresholds. The dashboard keeps the deterministic engine authoritative and requires explicit permission before test execution.
+- Added optional dashboard dependency instructions, backend API integration coverage in CI, and frontend type-check, lint, and production-build jobs.
+- Kept AI credentials in backend environment variables, restricted default API binding and CORS to loopback, validated repository sources and file paths, and made patch application explicit with backup and guarded rollback.
+
+### Notes and limitations
+
+- The dashboard has no authentication and must remain local. GitHub pull-request/CI integration, SARIF export, server-side PDF output, and verified post-patch rescans are not included in this release.
+- Docker integration behavior still requires a successful run of the dedicated CI job; local test execution was not part of this change's verification.
+
 ## [0.4.0] - 2026-11-08
 
 Production reliability and security upgrade.
