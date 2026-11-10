@@ -1,4 +1,4 @@
-import { ScanSearch, ShieldCheck } from "lucide-react";
+import { ScanSearch } from "lucide-react";
 import { NavLink } from "react-router-dom";
 
 import { NAV_GROUPS, SETTINGS_ITEM, type NavItem } from "@/app/navigation";
@@ -18,7 +18,8 @@ function NavRow({ item }: { item: NavItem }) {
         cn(
           "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
           "text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
-          isActive && "bg-sidebar-accent text-sidebar-accent-foreground",
+          isActive &&
+            "bg-primary/10 font-semibold text-primary ring-1 ring-inset ring-primary/15 hover:bg-primary/10 hover:text-primary",
         )
       }
     >
@@ -34,9 +35,9 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   return (
     <div className="flex h-full flex-col border-r border-sidebar-border bg-sidebar">
       <div className="flex h-14 items-center gap-2.5 border-b border-sidebar-border px-4">
-        <div className="flex h-8 w-8 items-center justify-center rounded-md bg-primary/15">
-          <ShieldCheck className="h-4 w-4 text-primary" />
-        </div>
+        <span className="vcqa-logo-badge" aria-hidden="true">
+          <img src="/phone-mascots.gif" alt="" draggable={false} />
+        </span>
         <div className="min-w-0">
           <p className="truncate text-sm font-semibold leading-tight">Vibe Coding QA</p>
           <p className="truncate text-[11px] text-muted-foreground">

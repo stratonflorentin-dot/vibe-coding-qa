@@ -50,6 +50,10 @@ class AIService:
         self.store = store
         self.settings = settings
         self.limiter = RateLimiter(settings.ai_max_requests_per_minute)
+        # Key supplied via the dashboard UI. Kept only in process memory on
+        # purpose: it is never persisted to SQLite and never returned in any
+        # response. Falls back to the environment key when unset.
+        self._runtime_api_key: str | None = None
 
     # ------------------------------------------------------------- settings
     def config(self) -> AIConfig:
@@ -60,10 +64,11 @@ class AIService:
         provider = str(stored.get("provider") or self.settings.ai_provider or "")
         if not enabled:
             provider = ""
+        api_key = self._runtime_api_key or self.settings.ai_api_key
         return AIConfig(
             provider=provider,
-            # The key is environment-only on purpose; it is never persisted.
-            api_key=self.settings.ai_api_key,
+            # The key is environment or in-memory only; it is never persisted.
+            api_key=api_key,
             base_url=str(stored.get("base_url") or self.settings.ai_base_url),
             model=str(stored.get("model") or self.settings.ai_model),
             timeout=int(stored.get("timeout") or self.settings.ai_timeout),
@@ -76,7 +81,7 @@ class AIService:
     def settings_view(self) -> dict:
         stored = self.store.all_settings().get("ai") or {}
         config = self.config()
-        if ai_configured(self.settings) and not stored:
+        if (self.settings.ai_api_key or self._runtime_api_key) and not stored:
             source = "environment"
         elif stored:
             source = "settings"
@@ -90,11 +95,16 @@ class AIService:
             "timeout": config.timeout,
             "max_output_tokens": config.max_output_tokens,
             "share_source_context": config.share_source_context,
-            "api_key_configured": bool(self.settings.ai_api_key),
+            "api_key_configured": bool(config.api_key),
             "source": source,
         }
 
     def update_settings(self, payload) -> dict:
+        key = (getattr(payload, "api_key", None) or "").strip()
+        if key:
+            self._runtime_api_key = key
+        elif getattr(payload, "clear_api_key", False):
+            self._runtime_api_key = None
         self.store.set_setting("ai", {
             "enabled": bool(payload.enabled),
             "provider": payload.provider.strip(),
@@ -109,10 +119,16 @@ class AIService:
     def test_connection(self) -> dict:
         config = self.config()
         if not config.enabled:
+            if not config.api_key:
+                detail = "No API key is configured. Paste a key in AI settings and save it first."
+            elif not config.provider:
+                detail = "AI features are disabled. Enable them in AI settings before testing."
+            else:
+                detail = "Choose a valid AI provider in AI settings before testing."
             return {
                 "ok": False, "configured": False, "provider": config.provider or None,
                 "model": config.model or None,
-                "detail": "No API key is configured. Set VCQA_AI_API_KEY in the environment of the backend process.",
+                "detail": detail,
             }
         try:
             reply = ChatProvider(config).check()

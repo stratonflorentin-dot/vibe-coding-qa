@@ -8,4 +8,4 @@ of truth for findings, scoring and the release gate.
 __all__ = ["__version__"]
 
 # Kept in sync with vibe_coding_qa.cli and pyproject/CHANGELOG.
-__version__ = "0.5.0"
+__version__ = "0.5.1"

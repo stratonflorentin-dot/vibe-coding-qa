@@ -1,6 +1,6 @@
-import { Search, ShieldAlert } from "lucide-react";
-import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { ChevronDown, ExternalLink, Search, ShieldAlert } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { Link, useSearchParams } from "react-router-dom";
 
 import { useApp } from "@/app/app-context";
 import { DataState } from "@/components/common/data-state";
@@ -13,55 +13,183 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useAsync } from "@/hooks/use-async";
 import { useDebounced } from "@/hooks/use-debounced";
 import { api } from "@/lib/api";
-import { formatDateTime, formatCount, titleCase } from "@/lib/format";
+import { groupIssues } from "@/lib/finding-groups";
+import { formatCount, titleCase } from "@/lib/format";
+import { cn } from "@/lib/utils";
+import type { Finding } from "@/types/api";
 
-const PAGE_SIZE = 25;
+const BATCH_SIZE = 10;
+const PRIORITIES = ["critical", "high", "medium", "low", "info"] as const;
+const PRIORITY_STYLES = {
+  critical: {
+    border: "border-severity-critical",
+    text: "text-severity-critical",
+    fill: "bg-severity-critical",
+    surface: "bg-severity-critical/10",
+  },
+  high: {
+    border: "border-severity-high",
+    text: "text-severity-high",
+    fill: "bg-severity-high",
+    surface: "bg-severity-high/10",
+  },
+  medium: {
+    border: "border-severity-medium",
+    text: "text-severity-medium",
+    fill: "bg-severity-medium",
+    surface: "bg-severity-medium/10",
+  },
+  low: {
+    border: "border-severity-low",
+    text: "text-severity-low",
+    fill: "bg-severity-low",
+    surface: "bg-severity-low/10",
+  },
+  info: {
+    border: "border-severity-info",
+    text: "text-severity-info",
+    fill: "bg-severity-info",
+    surface: "bg-severity-info/10",
+  },
+} as const;
 
 export function FindingsPage() {
   const { activeRepositoryId, repositories } = useApp();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [repositoryId, setRepositoryId] = useState("active");
-  const [severity, setSeverity] = useState("all");
   const [module, setModule] = useState("all");
   const [status, setStatus] = useState("open");
   const [search, setSearch] = useState("");
-  const [offset, setOffset] = useState(0);
+  const [visibleCount, setVisibleCount] = useState(BATCH_SIZE);
+  const parsedScanId = Number(searchParams.get("scan_id"));
+  const scanId =
+    Number.isSafeInteger(parsedScanId) && parsedScanId > 0 ? parsedScanId : undefined;
+  const priorityParam = searchParams.get("priority");
+  const selectedSeverity =
+    PRIORITIES.find((priority) => priority === priorityParam) ?? null;
   const debouncedSearch = useDebounced(search);
   const selectedRepositoryId =
-    repositoryId === "all"
+    scanId !== undefined || repositoryId === "all"
       ? undefined
       : repositoryId === "active"
         ? activeRepositoryId ?? undefined
         : Number(repositoryId);
 
+  function togglePriority(priority: (typeof PRIORITIES)[number]) {
+    const next = new URLSearchParams(searchParams);
+    if (selectedSeverity === priority) next.delete("priority");
+    else next.set("priority", priority);
+    setSearchParams(next, { replace: true });
+  }
+
+  function clearScanScope() {
+    const next = new URLSearchParams(searchParams);
+    next.delete("scan_id");
+    setSearchParams(next, { replace: true });
+  }
+
   const result = useAsync(
-    () =>
-      api.findings.list({
-        repository_id: selectedRepositoryId,
-        severity: severity === "all" ? undefined : [severity],
-        module: module === "all" ? undefined : [module],
-        status: status === "all" ? undefined : [status],
-        search: debouncedSearch || undefined,
-        limit: PAGE_SIZE,
-        offset,
-      }),
-    [selectedRepositoryId, severity, module, status, debouncedSearch, offset],
+    async () => {
+      const allFindings: Finding[] = [];
+      const pageSize = 200;
+      let pageOffset = 0;
+      let total = 0;
+
+      do {
+        const page = await api.findings.list({
+          scan_id: scanId,
+          repository_id: selectedRepositoryId,
+          module: module === "all" ? undefined : [module],
+          status: status === "all" ? undefined : [status],
+          search: debouncedSearch || undefined,
+          limit: pageSize,
+          offset: pageOffset,
+        });
+        allFindings.push(...page.items);
+        total = page.total;
+        if (!page.items.length) break;
+        pageOffset += page.items.length;
+      } while (pageOffset < total);
+
+      return allFindings;
+    },
+    [scanId, selectedRepositoryId, module, status, debouncedSearch],
   );
 
-  useEffect(() => setOffset(0), [selectedRepositoryId, severity, module, status, debouncedSearch]);
+  useEffect(() => {
+    if (scanId === undefined || selectedSeverity || result.loading || result.error || !result.data) {
+      return;
+    }
+    const firstAvailable = PRIORITIES.find((priority) =>
+      result.data?.some((finding) => finding.severity === priority),
+    );
+    if (!firstAvailable) return;
 
-  const items = result.data?.items ?? [];
-  const total = result.data?.total ?? 0;
+    const next = new URLSearchParams(searchParams);
+    next.set("priority", firstAvailable);
+    setSearchParams(next, { replace: true });
+  }, [
+    scanId,
+    selectedSeverity,
+    result.loading,
+    result.error,
+    result.data,
+    searchParams,
+    setSearchParams,
+  ]);
+
+  useEffect(
+    () => setVisibleCount(BATCH_SIZE),
+    [scanId, selectedRepositoryId, selectedSeverity, module, status, debouncedSearch],
+  );
+
+  const findings = useMemo(() => result.data ?? [], [result.data]);
+  const groups = useMemo(() => groupIssues(findings), [findings]);
+  const prioritySummary = useMemo(
+    () =>
+      PRIORITIES.map((priority) => {
+        const priorityGroups = groups.filter(
+          (group) => group.representative.severity === priority,
+        );
+        return {
+          priority,
+          findings: findings.filter((finding) => finding.severity === priority).length,
+          issues: priorityGroups.length,
+        };
+      }),
+    [findings, groups],
+  );
+  const selectedGroups = selectedSeverity
+    ? groups.filter((group) => group.representative.severity === selectedSeverity)
+    : [];
+  const visibleGroups = selectedGroups.slice(0, visibleCount);
 
   return (
     <div className="space-y-6">
       <PageHeader
         title="Findings"
-        description="Search and triage issues from actual completed scans. Review status does not mean a finding is fixed."
+        description="Choose a severity to review its highest-priority unique issues. Repeated findings are grouped with every affected location."
       />
+
+      {scanId !== undefined ? (
+        <Card className="border-primary/25 bg-primary/[0.03]">
+          <CardContent className="flex flex-wrap items-center justify-between gap-3 p-4">
+            <div>
+              <p className="font-semibold">Scan #{formatCount(scanId)} findings</p>
+              <p className="text-sm text-muted-foreground">
+                Showing findings from this scan only. Issues remain grouped by repeated rule and
+                message.
+              </p>
+            </div>
+            <Button size="sm" variant="outline" onClick={clearScanScope}>
+              Show latest findings
+            </Button>
+          </CardContent>
+        </Card>
+      ) : null}
 
       <Card>
         <CardContent className="grid gap-4 p-4 sm:grid-cols-2 xl:grid-cols-5">
@@ -78,27 +206,19 @@ export function FindingsPage() {
               />
             </div>
           </div>
-          <FilterSelect
-            id="finding-repository"
-            label="Repository"
-            value={repositoryId}
-            onChange={setRepositoryId}
-            options={[
-              { value: "active", label: "Top bar selection" },
-              { value: "all", label: "All repositories" },
-              ...repositories.map((repo) => ({ value: String(repo.id), label: repo.name })),
-            ]}
-          />
-          <FilterSelect
-            id="finding-severity"
-            label="Severity"
-            value={severity}
-            onChange={setSeverity}
-            options={["all", "critical", "high", "medium", "low", "info"].map((value) => ({
-              value,
-              label: value === "all" ? "All severities" : titleCase(value),
-            }))}
-          />
+          {scanId === undefined ? (
+            <FilterSelect
+              id="finding-repository"
+              label="Repository"
+              value={repositoryId}
+              onChange={setRepositoryId}
+              options={[
+                { value: "active", label: "Top bar selection" },
+                { value: "all", label: "All repositories" },
+                ...repositories.map((repo) => ({ value: String(repo.id), label: repo.name })),
+              ]}
+            />
+          ) : null}
           <FilterSelect
             id="finding-module"
             label="Category"
@@ -130,68 +250,204 @@ export function FindingsPage() {
         onRetry={() => void result.reload()}
         loadingRows={4}
       >
-        {items.length ? (
-          <>
-            <Card>
-              <CardContent className="overflow-x-auto p-0">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Severity</TableHead>
-                      <TableHead>Finding</TableHead>
-                      <TableHead>Category</TableHead>
-                      <TableHead>Repository</TableHead>
-                      <TableHead>Location</TableHead>
-                      <TableHead>Confidence</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead>Detected</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {items.map((finding) => (
-                      <TableRow key={finding.id}>
-                        <TableCell><SeverityBadge severity={finding.severity} /></TableCell>
-                        <TableCell className="min-w-56">
-                          <Link to={`/findings/${finding.id}`} className="font-medium hover:text-primary">
-                            {finding.rule}
-                          </Link>
-                          <p className="mt-1 max-w-md text-xs text-muted-foreground">{finding.message}</p>
-                        </TableCell>
-                        <TableCell>{titleCase(finding.module)}</TableCell>
-                        <TableCell>{finding.repository_name}</TableCell>
-                        <TableCell className="font-mono text-xs">
-                          {finding.file}:{finding.line}
-                        </TableCell>
-                        <TableCell>{titleCase(finding.confidence ?? "unknown")}</TableCell>
-                        <TableCell><FindingStatusBadge status={finding.status} /></TableCell>
-                        <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
-                          {formatDateTime(finding.created_at)}
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </CardContent>
-            </Card>
-            <div className="flex items-center justify-between text-sm">
-              <span className="text-muted-foreground">
-                Showing {offset + 1}–{Math.min(offset + PAGE_SIZE, total)} of {formatCount(total)}
-              </span>
-              <div className="flex gap-2">
-                <Button variant="outline" size="sm" disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}>
-                  Previous
-                </Button>
-                <Button variant="outline" size="sm" disabled={offset + PAGE_SIZE >= total} onClick={() => setOffset(offset + PAGE_SIZE)}>
-                  Next
-                </Button>
-              </div>
+        {findings.length ? (
+          <div className="space-y-5">
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+              {prioritySummary.map(({ priority, findings: count, issues }) => {
+                const styles = PRIORITY_STYLES[priority];
+                const selected = selectedSeverity === priority;
+                const maxCount = Math.max(...prioritySummary.map((item) => item.findings), 1);
+                const barWidth = `${Math.max(count ? 3 : 0, (count / maxCount) * 100)}%`;
+
+                return (
+                  <button
+                    key={priority}
+                    type="button"
+                    aria-pressed={selected}
+                    disabled={!count}
+                    onClick={() => togglePriority(priority)}
+                    className={cn(
+                      "group relative overflow-hidden rounded-lg border bg-card p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:translate-y-0",
+                      selected && `${styles.border} ${styles.surface} ring-1 ring-inset`,
+                    )}
+                  >
+                    <span className={cn("absolute inset-x-0 top-0 h-1", styles.fill)} />
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className={cn("text-sm font-semibold", styles.text)}>
+                          {titleCase(priority)}
+                        </p>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          {formatCount(issues)} unique issue{issues === 1 ? "" : "s"}
+                        </p>
+                      </div>
+                      <span className="text-2xl font-bold tabular-nums">
+                        {formatCount(count)}
+                      </span>
+                    </div>
+                    <div className="mt-4 h-1.5 overflow-hidden rounded-full bg-muted">
+                      <span
+                        className={cn("block h-full rounded-full transition-all", styles.fill)}
+                        style={{ width: barWidth }}
+                      />
+                    </div>
+                    <p className="mt-2 text-[11px] text-muted-foreground">
+                      {selected ? "Click to close" : "Click to review"}
+                    </p>
+                  </button>
+                );
+              })}
             </div>
-          </>
+
+            {selectedSeverity ? (
+              selectedGroups.length ? (
+                <section className="space-y-3" aria-live="polite">
+                  <div className="flex flex-wrap items-end justify-between gap-2">
+                    <div>
+                      <h2 className="text-lg font-semibold">
+                        {titleCase(selectedSeverity)} issues
+                      </h2>
+                      <p className="text-sm text-muted-foreground">
+                        Showing {formatCount(visibleGroups.length)} of{" "}
+                        {formatCount(selectedGroups.length)} unique issues from{" "}
+                        {formatCount(prioritySummary.find((item) => item.priority === selectedSeverity)?.findings ?? 0)} findings.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="space-y-3">
+                    {visibleGroups.map((group) => {
+                      const finding = group.representative;
+                      const fileCount = new Set(
+                        group.occurrences.map((item) => `${item.repository_id}:${item.file}`),
+                      ).size;
+                      const styles = PRIORITY_STYLES[selectedSeverity];
+
+                      return (
+                        <details
+                          key={group.key}
+                          className={cn(
+                            "group rounded-lg border border-l-4 bg-card transition-colors open:bg-muted/10",
+                            styles.border,
+                          )}
+                        >
+                          <summary className="flex cursor-pointer list-none items-center gap-3 px-3 py-2.5 [&::-webkit-details-marker]:hidden">
+                            <SeverityBadge severity={finding.severity} />
+                            <span className="min-w-0 flex-1">
+                              <span className="block truncate text-sm font-semibold">
+                                {finding.rule}
+                                <span className="ml-2 text-xs font-normal text-muted-foreground">
+                                  {titleCase(finding.module)}
+                                </span>
+                              </span>
+                              <span className="block line-clamp-1 text-xs text-muted-foreground">
+                                {finding.message || "No description was recorded."}
+                              </span>
+                            </span>
+                            <span
+                              className={cn(
+                                "shrink-0 rounded-md px-2 py-1 text-xs font-semibold tabular-nums",
+                                styles.surface,
+                                styles.text,
+                              )}
+                              title={`${formatCount(group.occurrences.length)} occurrences in ${formatCount(fileCount)} files`}
+                            >
+                              {formatCount(group.occurrences.length)}×
+                            </span>
+                            <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-180" />
+                          </summary>
+
+                          <div className="space-y-3 border-t px-3 py-3 sm:px-4">
+                            <p className="whitespace-pre-wrap text-sm leading-relaxed">
+                              {finding.message || "No description was recorded."}
+                            </p>
+                            {finding.suggestion ? (
+                              <div className="rounded-md bg-muted/60 px-3 py-2">
+                                <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                                  Suggested next step
+                                </p>
+                                <p className="text-sm">{finding.suggestion}</p>
+                              </div>
+                            ) : null}
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <p className="text-xs text-muted-foreground">
+                                {formatCount(group.occurrences.length)} occurrences across{" "}
+                                {formatCount(fileCount)} files
+                              </p>
+                              <Link
+                                to={`/findings/${group.occurrences[0].id}`}
+                                className="inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline"
+                              >
+                                Open finding details <ExternalLink className="h-3 w-3" />
+                              </Link>
+                            </div>
+                            <details className="border-t pt-2">
+                              <summary className="cursor-pointer text-xs font-medium text-muted-foreground hover:text-foreground">
+                                View affected locations
+                              </summary>
+                              <ul className="mt-2 grid max-h-52 gap-1.5 overflow-auto sm:grid-cols-2">
+                                {group.occurrences.map((item) => (
+                                  <li
+                                    key={item.id}
+                                    className="flex min-w-0 flex-wrap items-center gap-2 rounded bg-background px-2.5 py-2 text-xs"
+                                  >
+                                    <Link
+                                      to={`/findings/${item.id}`}
+                                      className="min-w-0 flex-1 break-all font-mono text-primary hover:underline"
+                                    >
+                                      {item.repository_name}: {item.file}:{item.line}
+                                    </Link>
+                                    <FindingStatusBadge status={item.status} />
+                                  </li>
+                                ))}
+                              </ul>
+                            </details>
+                          </div>
+                        </details>
+                      );
+                    })}
+                  </div>
+
+                  {visibleCount < selectedGroups.length ? (
+                    <div className="flex justify-center pt-1">
+                      <Button
+                        variant="outline"
+                        onClick={() =>
+                          setVisibleCount((current) =>
+                            Math.min(current + BATCH_SIZE, selectedGroups.length),
+                          )
+                        }
+                      >
+                        Load {Math.min(BATCH_SIZE, selectedGroups.length - visibleCount)} more{" "}
+                        {titleCase(selectedSeverity)} issues
+                      </Button>
+                    </div>
+                  ) : null}
+                </section>
+              ) : (
+                <EmptyState
+                  icon={ShieldAlert}
+                  title={`No ${titleCase(selectedSeverity).toLowerCase()} issues match these filters`}
+                  description="Try another priority, category, status, repository, or search term."
+                />
+              )
+            ) : (
+              <Card>
+                <CardContent className="p-6 text-center">
+                  <p className="font-medium">Choose a priority to review its issues</p>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    Each selection starts with the 10 most repeated unique issues. Load more in
+                    batches when you need the rest.
+                  </p>
+                </CardContent>
+              </Card>
+            )}
+          </div>
         ) : (
           <EmptyState
             icon={ShieldAlert}
             title="No findings match these filters"
-            description="Run a scan or adjust the severity, category, status, or repository filters."
+            description="Run a scan or adjust the category, status, search, or repository filters."
             action={<Button asChild variant="outline" size="sm"><Link to="/scans/new">Start a scan</Link></Button>}
           />
         )}

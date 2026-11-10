@@ -272,6 +272,13 @@ class ScanRunner:
 
         architecture = tests.get("architecture") or {}
         self.repositories.metadata_from_scan(repository["id"], architecture, True)
+        # Persist the full profile so the Architecture/Dependencies pages render
+        # instantly instead of re-walking the whole working tree on every request.
+        if architecture:
+            try:
+                self.store.set_setting(f"profile:{repository['id']}", architecture)
+            except Exception:  # noqa: BLE001
+                pass
 
         # The release gate is decided by the engine alone. AI review is recorded
         # as advisory status and never influences the gate.

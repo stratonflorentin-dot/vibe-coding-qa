@@ -136,6 +136,36 @@ class DashboardApiTests(unittest.TestCase):
             health = client.get("/api/health").json()
             self.assertTrue(health["ai_configured"])
 
+    def test_ai_key_from_settings_is_used_for_connection_test_without_persistence(self):
+        from unittest.mock import patch
+
+        api_key = "sk-runtime-secret"
+        response = self.client.put(
+            "/api/settings/ai",
+            json={
+                "enabled": True,
+                "provider": "openrouter",
+                "base_url": "https://openrouter.ai/api/v1",
+                "model": "nvidia/nemotron-3-ultra-550b-a5b:free",
+                "timeout": 30,
+                "max_output_tokens": 1000,
+                "share_source_context": False,
+                "api_key": api_key,
+            },
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertTrue(response.json()["api_key_configured"])
+        self.assertNotIn(api_key, response.text)
+        self.assertNotIn(api_key, json.dumps(self.app.state.services.store.all_settings()))
+        self.assertEqual(self.app.state.services.ai.config().api_key, api_key)
+
+        with patch("dashboard.backend.ai.service.ChatProvider.check", return_value="ready"):
+            result = self.client.post("/api/settings/ai/test")
+        self.assertEqual(result.status_code, 200, result.text)
+        self.assertTrue(result.json()["configured"])
+        self.assertTrue(result.json()["ok"])
+        self.assertNotIn(api_key, result.text)
+
     # -------------------------------------------------------------- repositories
     def test_repository_registration_is_validated(self):
         outside = self.client.post(
@@ -231,6 +261,9 @@ class DashboardApiTests(unittest.TestCase):
         self.assertIn("added", diff)
         self.assertIn("resolved", diff)
 
+        current_findings = self.client.get("/api/findings").json()
+        self.assertEqual(current_findings["total"], second["total_findings"])
+
         same = self.client.get("/api/scans/compare", params={"base": first["id"], "head": first["id"]})
         self.assertEqual(same.status_code, 400)
 
@@ -263,12 +296,32 @@ class DashboardApiTests(unittest.TestCase):
     # ------------------------------------------------------------- intelligence
     def test_architecture_and_dependencies(self):
         repository_id = self._register_sample_repo()
-        self._run_quick_scan(repository_id)
+        scan = self._run_quick_scan(repository_id)
+
+        extra_findings = [
+            {
+                "rule": "quality:repeated-test-finding",
+                "module": "quality",
+                "severity": "medium",
+                "file": f"src/repeated/finding-{index}.ts",
+                "line": 1,
+                "message": "Repeated finding used to verify complete architecture results.",
+            }
+            for index in range(205)
+        ]
+        self.app.state.services.store.insert_findings(scan["id"], repository_id, extra_findings)
 
         architecture = self.client.get(f"/api/architecture/{repository_id}").json()
         node_ids = {node["id"] for node in architecture["nodes"]}
         self.assertIn("app", node_ids)
         self.assertTrue(architecture["notes"])
+        attached_findings = [
+            finding
+            for node_findings in architecture["findings_by_node"].values()
+            for finding in node_findings
+        ]
+        self.assertEqual(len(attached_findings), scan["total_findings"] + len(extra_findings))
+        self.assertTrue(any(finding["module"] == "quality" for finding in attached_findings))
 
         dependencies = self.client.get(f"/api/dependencies/{repository_id}").json()
         self.assertFalse(dependencies["osv_checked"])

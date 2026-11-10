@@ -265,6 +265,10 @@ class Store:
                 "f.scan_id = (SELECT id FROM scans WHERE repository_id = ? AND status = 'completed' ORDER BY id DESC LIMIT 1)"
             )
             params.append(repository_id)
+        else:
+            clauses.append(
+                "f.scan_id IN (SELECT MAX(id) FROM scans WHERE status = 'completed' GROUP BY repository_id)"
+            )
         if severity:
             clauses.append(f"f.severity IN ({','.join('?' for _ in severity)})")
             params.extend(severity)

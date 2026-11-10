@@ -2,6 +2,15 @@
 
 All notable changes to the Vibe Coding QA engine are documented here.
 
+## [0.5.1] - 2026-11-10
+
+### Dashboard
+
+- Added a cinematic boot splash: the Mario/Luigi mascots reveal with a spinning halo and a light glint before the dashboard loads. It plays on each app open, is dismissible, and respects `prefers-reduced-motion`.
+- Packaged for pip/pipx: `pipx install vibe-coding-qa` then run `vibe-coding-qa` to launch the local dashboard (the frontend ships prebuilt, so no Node is needed). The database defaults to a per-user location (`~/.vibe-coding-qa`); added a browser-opening launcher and a `vcqa` CLI entry point.
+- Refreshed the interface: indigo/violet accent, restyled buttons with hover lift and glow, deeper cards, a circular Mario/Luigi logo, and a draggable "Ask AI" launcher.
+- Performance: the repository profile is persisted at scan time and cached, so the Architecture and Dependencies pages load instantly instead of re-walking the working tree on every request.
+
 ## [0.5.0] - 2026-11-08
 
 ### Dashboard

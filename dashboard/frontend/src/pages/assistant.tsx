@@ -72,7 +72,10 @@ export function AssistantPage() {
     endRef.current?.scrollIntoView({ block: "end", behavior: "smooth" });
   }, [messages, sending]);
 
-  const aiUnavailable = notConfigured || health?.ai_configured === false;
+  const aiUnavailable =
+    health?.ai_configured === true
+      ? false
+      : notConfigured || health?.ai_configured === false;
 
   function startNewConversation() {
     setActiveId(null);

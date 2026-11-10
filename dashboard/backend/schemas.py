@@ -352,6 +352,16 @@ class DependenciesOut(BaseModel):
 
 
 # ----------------------------------------------------------------------- settings
+class LoginIn(BaseModel):
+    username: str = Field(default="", max_length=200)
+    password: str = Field(default="", max_length=500)
+
+
+class AuthStatusOut(BaseModel):
+    auth_required: bool
+    authenticated: bool
+
+
 class AISettingsIn(BaseModel):
     enabled: bool = False
     provider: str = Field(default="openrouter", max_length=60)
@@ -360,6 +370,11 @@ class AISettingsIn(BaseModel):
     timeout: int = Field(default=30, ge=1, le=600)
     max_output_tokens: int = Field(default=3000, ge=1, le=16000)
     share_source_context: bool = False
+    # Optional. Held in process memory only; never persisted or echoed back.
+    # An empty string means "leave the existing key unchanged"; use clear_api_key
+    # to remove it.
+    api_key: str = Field(default="", max_length=512)
+    clear_api_key: bool = False
 
 
 class AISettingsOut(BaseModel):

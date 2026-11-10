@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vibe-coding-qa"
+version = "0.5.1"
+description = "Local static-analysis QA dashboard for AI-assisted web products - runs on your machine, your data stays on your PC."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi>=0.115,<1",
+    "pydantic>=2.8,<3",
+    "uvicorn>=0.30,<1",
+    "httpx>=0.27,<1",
+]
+
+[project.scripts]
+# Launch the local dashboard (opens the browser).
+vibe-coding-qa = "dashboard.launcher:main"
+# The standalone command-line analysis engine.
+vcqa = "vibe_coding_qa.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["vibe_coding_qa*", "dashboard*"]
+exclude = ["tests*", "dashboard.frontend.node_modules*"]
+
+[tool.setuptools.package-data]
+# Ship the prebuilt single-page frontend so users never need Node to run it.
+dashboard = ["frontend/dist/**/*"]

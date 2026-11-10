@@ -24,3 +24,11 @@ commit_msg*.txt
 
 # Local launcher secrets (holds the AI API key) - never commit
 vcqa.local.ps1
+
+# Python packaging build artifacts
+/build/
+/dist/
+*.egg-info/
+
+# graphify knowledge-graph output (generated)
+graphify-out/

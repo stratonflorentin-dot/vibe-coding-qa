@@ -99,6 +99,14 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   }
 
   if (!response.ok) {
+    if (response.status === 401) {
+      // Let the auth gate drop back to the login screen on an expired session.
+      try {
+        window.dispatchEvent(new CustomEvent("vcqa-auth-required"));
+      } catch {
+        /* non-browser environment */
+      }
+    }
     const detail =
       payload && typeof payload === "object" && "detail" in payload
         ? formatDetail((payload as { detail: unknown }).detail)
@@ -283,8 +291,22 @@ export const intel = {
     request<Dependencies>(`/api/dependencies/${repositoryId}${buildQuery({ osv })}`),
 };
 
+// --------------------------------------------------------------------- auth
+export interface AuthStatus {
+  auth_required: boolean;
+  authenticated: boolean;
+}
+
+export const auth = {
+  status: () => request<AuthStatus>("/api/auth/status"),
+  login: (payload: { username: string; password: string }) =>
+    request<AuthStatus>("/api/auth/login", json("POST", payload)),
+  logout: () => request<AuthStatus>("/api/auth/logout", { method: "POST" }),
+};
+
 export const api = {
   system,
+  auth,
   repositories,
   scans,
   findings,

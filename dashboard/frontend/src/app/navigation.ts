@@ -1,14 +1,11 @@
 import {
   Boxes,
-  FileBarChart,
   GitBranchPlus,
   LayoutDashboard,
   PackageSearch,
   ScanSearch,
   Settings,
   ShieldAlert,
-  Sparkles,
-  Wrench,
   type LucideIcon,
 } from "lucide-react";
 
@@ -72,29 +69,6 @@ export const NAV_GROUPS: NavGroup[] = [
         label: "Dependencies",
         icon: PackageSearch,
         description: "Direct and transitive packages with advisory lookups.",
-      },
-    ],
-  },
-  {
-    label: "Intelligence",
-    items: [
-      {
-        to: "/assistant",
-        label: "AI Assistant",
-        icon: Sparkles,
-        description: "Ask questions grounded in real scan results.",
-      },
-      {
-        to: "/remediations",
-        label: "Remediation",
-        icon: Wrench,
-        description: "Proposed patches that require explicit human approval.",
-      },
-      {
-        to: "/reports",
-        label: "Reports",
-        icon: FileBarChart,
-        description: "Executive summaries and per-scan reports.",
       },
     ],
   },

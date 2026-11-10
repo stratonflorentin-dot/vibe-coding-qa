@@ -16,6 +16,13 @@ BACKEND_DIR = Path(__file__).resolve().parent
 DASHBOARD_DIR = BACKEND_DIR.parent
 PROJECT_ROOT = DASHBOARD_DIR.parent
 
+# When the dashboard is installed as a package it lives in site-packages, so user
+# data (the SQLite database) must live in a writable, per-user location on the
+# user's own machine - never inside the installed package. Override with the
+# ``VCQA_DASHBOARD_DB`` environment variable.
+USER_DATA_DIR = Path.home() / ".vibe-coding-qa"
+DEFAULT_DB_PATH = USER_DATA_DIR / "vcqa.sqlite3"
+
 # The dashboard reuses the existing analysis engine in place; it is not a copy.
 # Put the project root on ``sys.path`` so ``import vibe_coding_qa`` works no
 # matter how the app is launched (``uvicorn``, ``python -m``, tests).
@@ -65,7 +72,7 @@ class Settings:
 
     host: str = "127.0.0.1"
     port: int = 8756
-    db_path: Path = field(default_factory=lambda: DASHBOARD_DIR / "data" / "vcqa.sqlite3")
+    db_path: Path = field(default_factory=lambda: DEFAULT_DB_PATH)
 
     # Only localhost origins are allowed by default. The frontend dev server and
     # the packaged static build are both served from localhost.
@@ -117,7 +124,7 @@ def _build_settings() -> Settings:
     return Settings(
         host=os.environ.get("VCQA_DASHBOARD_HOST", "127.0.0.1"),
         port=_int("VCQA_DASHBOARD_PORT", 8756),
-        db_path=Path(os.environ.get("VCQA_DASHBOARD_DB", str(DASHBOARD_DIR / "data" / "vcqa.sqlite3"))).expanduser(),
+        db_path=Path(os.environ.get("VCQA_DASHBOARD_DB", str(DEFAULT_DB_PATH))).expanduser(),
         cors_origins=_csv(
             "VCQA_DASHBOARD_CORS",
             [

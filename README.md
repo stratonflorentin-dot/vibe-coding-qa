@@ -18,6 +18,38 @@ To add it to another project, copy the `vibe-coding-qa` folder into that project
 
 The optional dashboard runs the existing Python scanning engine through a local FastAPI API and a React interface. The CLI remains usable without installing dashboard dependencies.
 
+### Run it as a local app (recommended)
+
+The dashboard ships as a pip-installable package with the frontend **prebuilt**, so users need **only Python 3.10+** — no Node, no cloning. Each person runs their own copy and **all data stays on their machine**: a local SQLite database at `~/.vibe-coding-qa/vcqa.sqlite3`. Nothing is ever sent to a server.
+
+Install with [pipx](https://pipx.pypa.io) (isolated) from the built wheel:
+
+```bash
+pipx install vibe_coding_qa-0.5.0-py3-none-any.whl
+```
+
+or with pip inside a virtual environment:
+
+```bash
+pip install vibe_coding_qa-0.5.0-py3-none-any.whl
+```
+
+Then launch it — this starts the local server and opens your browser at `http://127.0.0.1:8756`:
+
+```bash
+vibe-coding-qa
+```
+
+The standalone command-line engine is also installed, as `vcqa`. Notes:
+
+- The server binds to **loopback only** and refuses any non-loopback address, so it is never reachable from outside the machine. No login is needed locally.
+- Override the database location with `VCQA_DASHBOARD_DB`; set `VCQA_NO_BROWSER=1` to skip auto-opening the browser.
+- AI features are optional and off by default (set `VCQA_AI_API_KEY` to enable).
+
+---
+
+For development from source (contributors), use the steps below instead.
+
 Install the backend extras from the repository root:
 
 ```powershell

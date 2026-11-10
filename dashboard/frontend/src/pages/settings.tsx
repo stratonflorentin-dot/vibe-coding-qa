@@ -227,11 +227,13 @@ function toAiForm(settings: AISettings): AISettingsIn {
     timeout: settings.timeout,
     max_output_tokens: settings.max_output_tokens,
     share_source_context: settings.share_source_context,
+    api_key: "",
   };
 }
 
 function AiTab() {
   const { toast } = useToast();
+  const { reload: reloadApp } = useApp();
   const settings = useAsync(() => api.system.aiSettings(), []);
   const [form, setForm] = useState<AISettingsIn | null>(null);
   const [saving, setSaving] = useState(false);
@@ -246,6 +248,12 @@ function AiTab() {
 
   const current = form ?? (settings.data ? toAiForm(settings.data) : null);
 
+  function updateForm(next: AISettingsIn) {
+    setForm(next);
+    setTestResult(null);
+    setTestError(null);
+  }
+
   async function save() {
     if (!current) return;
     setSaving(true);
@@ -254,6 +262,9 @@ function AiTab() {
       const saved = await api.system.updateAiSettings(current);
       setForm(toAiForm(saved));
       settings.setData(saved);
+      await reloadApp(true);
+      setTestResult(null);
+      setTestError(null);
       toast({ title: "AI settings saved", variant: "success" });
     } catch (caught) {
       const message =
@@ -266,10 +277,15 @@ function AiTab() {
   }
 
   async function testConnection() {
+    if (!current) return;
     setTesting(true);
     setTestError(null);
     setTestResult(null);
     try {
+      const saved = await api.system.updateAiSettings(current);
+      setForm(toAiForm(saved));
+      settings.setData(saved);
+      await reloadApp(true);
       setTestResult(await api.system.testAiConnection());
     } catch (caught) {
       setTestError(
@@ -308,7 +324,7 @@ function AiTab() {
                 label="Enable AI features"
                 description="Turn AI assistance on or off across the dashboard."
                 checked={current.enabled}
-                onCheckedChange={(checked) => setForm({ ...current, enabled: checked })}
+                onCheckedChange={(checked) => updateForm({ ...current, enabled: checked })}
               />
 
               <div className="grid gap-4 sm:grid-cols-2">
@@ -316,34 +332,34 @@ function AiTab() {
                   <Input
                     id="ai-provider"
                     value={current.provider}
-                    onChange={(event) => setForm({ ...current, provider: event.target.value })}
+                    onChange={(event) => updateForm({ ...current, provider: event.target.value })}
                   />
                 </Field>
                 <Field label="Model" htmlFor="ai-model">
                   <Input
                     id="ai-model"
                     value={current.model}
-                    onChange={(event) => setForm({ ...current, model: event.target.value })}
+                    onChange={(event) => updateForm({ ...current, model: event.target.value })}
                   />
                 </Field>
                 <Field label="Base URL" htmlFor="ai-base-url">
                   <Input
                     id="ai-base-url"
                     value={current.base_url}
-                    onChange={(event) => setForm({ ...current, base_url: event.target.value })}
+                    onChange={(event) => updateForm({ ...current, base_url: event.target.value })}
                   />
                 </Field>
                 <NumberField
                   label="Timeout (seconds)"
                   htmlFor="ai-timeout"
                   value={current.timeout}
-                  onChange={(value) => setForm({ ...current, timeout: value })}
+                  onChange={(value) => updateForm({ ...current, timeout: value })}
                 />
                 <NumberField
                   label="Max output tokens"
                   htmlFor="ai-max-output"
                   value={current.max_output_tokens}
-                  onChange={(value) => setForm({ ...current, max_output_tokens: value })}
+                  onChange={(value) => updateForm({ ...current, max_output_tokens: value })}
                 />
               </div>
 
@@ -353,20 +369,53 @@ function AiTab() {
                 description="When enabled, the dashboard sends selected source context to the configured provider so it can answer with real code. Leave this off to keep source on the server."
                 checked={current.share_source_context}
                 onCheckedChange={(checked) =>
-                  setForm({ ...current, share_source_context: checked })
+                  updateForm({ ...current, share_source_context: checked })
                 }
               />
 
-              <div className="space-y-1.5 rounded-md border bg-muted/30 p-3">
-                <p className="text-sm font-medium">Server-side credentials</p>
-                <p className="text-xs text-muted-foreground">
-                  {settings.data.api_key_configured ? "A key is configured" : "No key configured"} ·
-                  source: {SOURCE_LABELS[settings.data.source]}
-                </p>
-                <p className="text-xs text-muted-foreground">
-                  Set <code>VCQA_AI_API_KEY</code> in the backend process environment. Keys are
-                  never sent through the browser or stored in SQLite.
-                </p>
+              <div className="space-y-2 rounded-md border bg-muted/30 p-3">
+                <div className="flex items-center justify-between">
+                  <p className="text-sm font-medium">API key</p>
+                  <span className="text-xs text-muted-foreground">
+                    {settings.data.api_key_configured
+                      ? "Configured (held in memory only)"
+                      : "Not configured"}
+                    {" · "}source: {SOURCE_LABELS[settings.data.source]}
+                  </span>
+                </div>
+                <Field
+                  label={settings.data.api_key_configured ? "Replace key (leave empty to keep current)" : "Paste your provider API key"}
+                  htmlFor="ai-api-key"
+                >
+                  <Input
+                    id="ai-api-key"
+                    type="password"
+                    autoComplete="off"
+                    spellCheck={false}
+                    placeholder={settings.data.api_key_configured ? "••••••••••••" : "sk-..."}
+                    value={current.api_key ?? ""}
+                    onChange={(event) =>
+                      updateForm({ ...current, api_key: event.target.value, clear_api_key: false })
+                    }
+                  />
+                </Field>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    disabled={!settings.data.api_key_configured}
+                    onClick={() =>
+                      updateForm({ ...current, api_key: "", clear_api_key: true })
+                    }
+                  >
+                    Clear stored key
+                  </Button>
+                  <p className="text-xs text-muted-foreground">
+                    The key is sent to the backend over this session and kept in process memory.
+                    It is never saved to the database and never shown again.
+                  </p>
+                </div>
               </div>
 
               {saveError ? (
@@ -377,8 +426,12 @@ function AiTab() {
               ) : null}
 
               <div className="flex flex-wrap justify-end gap-2">
-                <Button variant="outline" onClick={() => void testConnection()} disabled={testing}>
-                  {testing ? "Testing…" : "Test connection"}
+                <Button
+                  variant="outline"
+                  onClick={() => void testConnection()}
+                  disabled={testing || saving}
+                >
+                  {testing ? "Saving and testing…" : "Save & test connection"}
                 </Button>
                 <Button onClick={() => void save()} disabled={saving}>
                   {saving ? "Saving…" : "Save AI settings"}

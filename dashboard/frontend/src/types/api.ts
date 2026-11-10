@@ -217,6 +217,8 @@ export interface AISettingsIn {
   timeout: number;
   max_output_tokens: number;
   share_source_context: boolean;
+  api_key?: string;
+  clear_api_key?: boolean;
 }
 
 export interface AIConnectionTest {

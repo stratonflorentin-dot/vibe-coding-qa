@@ -13,7 +13,7 @@
     --popover: 0 0% 100%;
     --popover-foreground: 224 71% 4%;
 
-    --primary: 199 89% 48%;
+    --primary: 256 72% 54%;
     --primary-foreground: 210 20% 98%;
 
     --secondary: 220 14% 96%;
@@ -30,7 +30,7 @@
 
     --border: 220 13% 91%;
     --input: 220 13% 91%;
-    --ring: 199 89% 48%;
+    --ring: 256 72% 54%;
 
     --sidebar: 220 20% 98%;
     --sidebar-foreground: 224 71% 4%;
@@ -65,7 +65,7 @@
     --popover: 224 47% 8%;
     --popover-foreground: 210 20% 98%;
 
-    --primary: 199 89% 55%;
+    --primary: 256 84% 66%;
     --primary-foreground: 210 20% 98%;
 
     --secondary: 222 33% 14%;
@@ -82,7 +82,7 @@
 
     --border: 222 28% 18%;
     --input: 222 28% 20%;
-    --ring: 199 89% 55%;
+    --ring: 256 84% 72%;
 
     --sidebar: 224 55% 6%;
     --sidebar-foreground: 210 20% 96%;
@@ -142,4 +142,553 @@
       radial-gradient(at 0% 0%, hsl(var(--primary) / 0.08) 0px, transparent 55%),
       radial-gradient(at 100% 0%, hsl(var(--severity-low) / 0.06) 0px, transparent 45%);
   }
+
+  .architecture-node-enter {
+    transform-box: fill-box;
+    transform-origin: center;
+    animation: architecture-node-enter 520ms cubic-bezier(0.2, 0.75, 0.25, 1) both;
+  }
+
+  .architecture-node-card {
+    transition: stroke 160ms ease, filter 160ms ease;
+  }
+
+  .architecture-node-card:hover {
+    filter: drop-shadow(0 5px 12px hsl(var(--primary) / 0.2));
+  }
+
+  .architecture-edge-active {
+    stroke-dasharray: 8 9;
+    animation: architecture-edge-flow 900ms linear infinite;
+  }
+
+  .architecture-flow-dot {
+    fill: hsl(var(--primary));
+    stroke: hsl(var(--background));
+    stroke-width: 2;
+    filter: drop-shadow(0 0 5px hsl(var(--primary) / 0.8));
+  }
+
+  .improve-cta {
+    animation: improve-cta-glow 3.2s ease-in-out infinite;
+    transition: transform 180ms ease, box-shadow 180ms ease;
+  }
+
+  .improve-cta:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 7px 20px hsl(var(--primary) / 0.28);
+  }
+
+  .improve-cta-arrow {
+    transition: transform 180ms ease;
+  }
+
+  .improve-cta:hover .improve-cta-arrow {
+    transform: translateX(3px);
+  }
+
+  .recommendations-cta {
+    transition: transform 180ms ease, border-color 180ms ease, box-shadow 180ms ease;
+  }
+
+  .recommendations-cta:hover {
+    transform: translateY(-1px);
+    border-color: hsl(var(--primary) / 0.6);
+    box-shadow: 0 5px 16px hsl(var(--primary) / 0.14);
+  }
+
+  .assistant-launcher {
+    position: fixed;
+    right: max(1.25rem, env(safe-area-inset-right));
+    bottom: max(1.25rem, env(safe-area-inset-bottom));
+    z-index: 40;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    min-width: 11rem;
+    padding: 0.5rem 1rem 0.5rem 0.5rem;
+    border: 1px solid hsl(var(--primary) / 0.35);
+    border-radius: 9999px;
+    background: hsl(var(--card) / 0.96);
+    color: hsl(var(--foreground));
+    box-shadow: 0 8px 26px hsl(224 71% 4% / 0.24), 0 0 0 1px hsl(var(--background) / 0.4);
+    backdrop-filter: blur(12px);
+    transition: transform 180ms ease, border-color 180ms ease, box-shadow 180ms ease;
+  }
+
+  .assistant-launcher:hover {
+    transform: translateY(-3px);
+    border-color: hsl(var(--primary) / 0.75);
+    box-shadow: 0 12px 30px hsl(var(--primary) / 0.22);
+  }
+
+  .assistant-launcher:focus-visible {
+    outline: 2px solid hsl(var(--ring));
+    outline-offset: 3px;
+  }
+
+  .assistant-launcher-mascots {
+    display: grid;
+    width: 3.25rem;
+    height: 3.25rem;
+    flex: 0 0 auto;
+    place-items: center;
+    overflow: hidden;
+    border-radius: 9999px;
+    background: hsl(var(--primary) / 0.12);
+  }
+
+  .assistant-launcher-mascots img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+
+  .assistant-launcher-copy {
+    display: grid;
+    gap: 0.1rem;
+  }
+
+  .assistant-launcher-eyebrow {
+    color: hsl(var(--muted-foreground));
+    font-size: 0.65rem;
+    line-height: 1;
+  }
+
+  .assistant-launcher-title {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-size: 0.875rem;
+    font-weight: 650;
+  }
+
+  /* Circular Mario/Luigi mascot badge with a cinematic reveal + rotating halo. */
+  .vcqa-logo-badge {
+    position: relative;
+    display: grid;
+    place-items: center;
+    width: 2.15rem;
+    height: 2.15rem;
+    flex: 0 0 auto;
+    border-radius: 9999px;
+    isolation: isolate;
+    animation: vcqa-logo-reveal 950ms cubic-bezier(0.22, 0.9, 0.24, 1.12) both;
+  }
+
+  .vcqa-logo-badge::before {
+    content: "";
+    position: absolute;
+    inset: -2px;
+    border-radius: 9999px;
+    background: conic-gradient(
+      from 0deg,
+      transparent 0deg,
+      hsl(var(--primary)) 80deg,
+      hsl(var(--severity-low)) 150deg,
+      transparent 240deg
+    );
+    animation: vcqa-logo-spin 3.6s linear infinite;
+    z-index: -1;
+  }
+
+  .vcqa-logo-badge img {
+    width: 100%;
+    height: 100%;
+    border-radius: 9999px;
+    object-fit: cover;
+    background: hsl(var(--sidebar));
+    box-shadow: 0 0 0 2px hsl(var(--sidebar));
+  }
+}
+
+@keyframes improve-cta-glow {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 hsl(var(--primary) / 0.05);
+  }
+
+  50% {
+    box-shadow: 0 0 0 4px hsl(var(--primary) / 0.12);
+  }
+}
+
+@keyframes architecture-node-enter {
+  from {
+    opacity: 0;
+    transform: translateY(26px) scale(0.94);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes architecture-edge-flow {
+  to {
+    stroke-dashoffset: -34;
+  }
+}
+
+@keyframes vcqa-logo-reveal {
+  from {
+    opacity: 0;
+    transform: scale(0.45) rotate(-230deg);
+  }
+
+  60% {
+    opacity: 1;
+    transform: scale(1.1) rotate(10deg);
+  }
+
+  to {
+    opacity: 1;
+    transform: scale(1) rotate(0deg);
+  }
+}
+
+@keyframes vcqa-logo-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .architecture-node-enter,
+  .architecture-edge-active,
+  .improve-cta,
+  .vcqa-logo-badge,
+  .vcqa-logo-badge::before {
+    animation: none;
+  }
+
+  .improve-cta,
+  .improve-cta-arrow,
+  .recommendations-cta,
+  .assistant-launcher {
+    transition: none;
+  }
+
+  .assistant-launcher-mascots img {
+    display: none;
+  }
+
+  .architecture-flow-dot {
+    display: none;
+  }
+}
+
+/* ----------------------------------------------------------------- boot splash */
+.vcqa-splash {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 1.6rem;
+  cursor: pointer;
+  background: radial-gradient(circle at 50% 40%, hsl(256 55% 15%), hsl(224 71% 4%) 68%);
+  animation: vcqa-splash-in 360ms ease both;
+}
+
+.vcqa-splash.is-leaving {
+  animation: vcqa-splash-out 640ms cubic-bezier(0.7, 0, 0.3, 1) forwards;
+}
+
+.vcqa-splash-stage {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 196px;
+  height: 196px;
+}
+
+.vcqa-splash-rings {
+  position: absolute;
+  inset: -16px;
+  border-radius: 9999px;
+  background: conic-gradient(
+    from 0deg,
+    transparent 0deg,
+    hsl(var(--primary)) 70deg,
+    hsl(var(--severity-low)) 160deg,
+    transparent 280deg
+  );
+  filter: blur(1px);
+  animation: vcqa-splash-spin 2.4s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+
+.vcqa-splash-rings::after {
+  content: "";
+  position: absolute;
+  inset: 14px;
+  border-radius: 9999px;
+  background: conic-gradient(from 180deg, transparent, hsl(var(--primary) / 0.8) 120deg, transparent 300deg);
+  animation: vcqa-splash-spin-rev 3s linear infinite;
+}
+
+.vcqa-splash-badge {
+  position: relative;
+  width: 152px;
+  height: 152px;
+  border-radius: 9999px;
+  overflow: hidden;
+  background: hsl(224 71% 6%);
+  box-shadow: 0 0 0 4px hsl(224 71% 4%), 0 0 46px hsl(var(--primary) / 0.6);
+  animation: vcqa-splash-reveal 1400ms cubic-bezier(0.18, 0.9, 0.22, 1.1) both;
+}
+
+.vcqa-splash-badge img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.vcqa-splash-glint {
+  position: absolute;
+  inset: 0;
+  border-radius: 9999px;
+  pointer-events: none;
+  background: linear-gradient(115deg, transparent 42%, hsl(0 0% 100% / 0.4) 50%, transparent 58%);
+  background-size: 250% 250%;
+  animation: vcqa-splash-glint 1200ms ease 760ms both;
+}
+
+.vcqa-splash-wordmark {
+  display: grid;
+  justify-items: center;
+  gap: 0.45rem;
+  text-align: center;
+  animation: vcqa-splash-rise 700ms ease 920ms both;
+}
+
+.vcqa-splash-title {
+  font-size: clamp(1.4rem, 5.2vw, 2.25rem);
+  font-weight: 800;
+  letter-spacing: 0.24em;
+  color: hsl(210 20% 98%);
+  text-shadow: 0 2px 34px hsl(var(--primary) / 0.65);
+}
+
+.vcqa-splash-tagline {
+  font-size: 0.85rem;
+  letter-spacing: 0.01em;
+  color: hsl(var(--muted-foreground));
+}
+
+.vcqa-splash-bar {
+  width: 190px;
+  height: 4px;
+  border-radius: 9999px;
+  overflow: hidden;
+  background: hsl(0 0% 100% / 0.1);
+  animation: vcqa-splash-rise 500ms ease 1120ms both;
+}
+
+.vcqa-splash-bar span {
+  display: block;
+  height: 100%;
+  width: 42%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, hsl(var(--primary)), hsl(var(--severity-low)));
+  animation: vcqa-splash-load 1700ms ease-in-out 1150ms both;
+}
+
+.vcqa-splash-skip {
+  position: fixed;
+  right: 1.5rem;
+  bottom: 1.5rem;
+  padding: 0.35rem 0.95rem;
+  font-size: 0.75rem;
+  color: hsl(var(--muted-foreground));
+  background: hsl(0 0% 100% / 0.06);
+  border: 1px solid hsl(0 0% 100% / 0.12);
+  border-radius: 9999px;
+  cursor: pointer;
+  transition: color 150ms ease, border-color 150ms ease;
+}
+
+.vcqa-splash-skip:hover {
+  color: hsl(210 20% 98%);
+  border-color: hsl(var(--primary) / 0.6);
+}
+
+@keyframes vcqa-splash-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes vcqa-splash-out {
+  to { opacity: 0; transform: scale(1.06); visibility: hidden; }
+}
+
+@keyframes vcqa-splash-reveal {
+  0% { opacity: 0; transform: scale(0.3) rotate(-280deg); }
+  55% { opacity: 1; transform: scale(1.12) rotate(14deg); }
+  100% { opacity: 1; transform: scale(1) rotate(0deg); }
+}
+
+@keyframes vcqa-splash-spin {
+  0% { transform: rotate(0deg); opacity: 0; }
+  18% { opacity: 1; }
+  100% { transform: rotate(540deg); opacity: 1; }
+}
+
+@keyframes vcqa-splash-spin-rev {
+  to { transform: rotate(-360deg); }
+}
+
+@keyframes vcqa-splash-glint {
+  0% { background-position: 130% 0; }
+  100% { background-position: -130% 0; }
+}
+
+@keyframes vcqa-splash-rise {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes vcqa-splash-load {
+  0% { transform: translateX(-120%); }
+  100% { transform: translateX(360%); }
+}
+
+.vcqa-splash.is-reduced .vcqa-splash-rings,
+.vcqa-splash.is-reduced .vcqa-splash-rings::after,
+.vcqa-splash.is-reduced .vcqa-splash-badge,
+.vcqa-splash.is-reduced .vcqa-splash-glint,
+.vcqa-splash.is-reduced .vcqa-splash-bar span {
+  animation: none;
+}
+
+.vcqa-splash.is-reduced .vcqa-splash-badge {
+  opacity: 1;
+  transform: none;
+}
+
+/* ----------------------------------------------------------------- login screen */
+.vcqa-login {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 1rem;
+  padding: 1.5rem;
+  background: radial-gradient(circle at 50% 36%, hsl(256 55% 14%), hsl(224 71% 4%) 70%);
+}
+
+.vcqa-login-card {
+  display: grid;
+  justify-items: center;
+  gap: 0.2rem;
+  width: min(92vw, 360px);
+  padding: 2rem 1.75rem 1.75rem;
+  border: 1px solid hsl(var(--border));
+  border-radius: 1rem;
+  background: hsl(var(--card) / 0.92);
+  box-shadow: 0 24px 70px hsl(224 71% 2% / 0.6), inset 0 1px 0 hsl(0 0% 100% / 0.05);
+  backdrop-filter: blur(10px);
+}
+
+.vcqa-login-badge {
+  display: grid;
+  place-items: center;
+  width: 4.25rem;
+  height: 4.25rem;
+  margin-bottom: 0.5rem;
+  overflow: hidden;
+  border-radius: 9999px;
+  background: hsl(var(--primary) / 0.14);
+  box-shadow: 0 0 0 1px hsl(var(--primary) / 0.4), 0 0 30px hsl(var(--primary) / 0.4);
+}
+
+.vcqa-login-badge img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.vcqa-login-title {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: hsl(var(--foreground));
+}
+
+.vcqa-login-sub {
+  margin-bottom: 1rem;
+  font-size: 0.85rem;
+  color: hsl(var(--muted-foreground));
+}
+
+.vcqa-login-field {
+  display: grid;
+  gap: 0.3rem;
+  width: 100%;
+  margin-bottom: 0.75rem;
+  text-align: left;
+}
+
+.vcqa-login-field span {
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: hsl(var(--muted-foreground));
+}
+
+.vcqa-login-field input {
+  width: 100%;
+  height: 2.5rem;
+  padding: 0 0.75rem;
+  font-size: 0.9rem;
+  color: hsl(var(--foreground));
+  background: hsl(var(--background) / 0.6);
+  border: 1px solid hsl(var(--input));
+  border-radius: 0.6rem;
+  outline: none;
+  transition: border-color 150ms ease, box-shadow 150ms ease;
+}
+
+.vcqa-login-field input:focus {
+  border-color: hsl(var(--primary) / 0.7);
+  box-shadow: 0 0 0 3px hsl(var(--primary) / 0.2);
+}
+
+.vcqa-login-error {
+  width: 100%;
+  margin-bottom: 0.6rem;
+  font-size: 0.8rem;
+  color: hsl(var(--destructive));
+}
+
+.vcqa-login-btn {
+  width: 100%;
+  height: 2.6rem;
+  margin-top: 0.25rem;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: hsl(var(--primary-foreground));
+  background: hsl(var(--primary));
+  border: none;
+  border-radius: 0.6rem;
+  cursor: pointer;
+  transition: background 150ms ease, box-shadow 150ms ease, transform 150ms ease;
+}
+
+.vcqa-login-btn:hover:not(:disabled) {
+  background: hsl(var(--primary) / 0.9);
+  box-shadow: 0 6px 18px -2px hsl(var(--primary) / 0.5);
+  transform: translateY(-1px);
+}
+
+.vcqa-login-btn:disabled {
+  opacity: 0.65;
+  cursor: progress;
+}
+
+.vcqa-login-foot {
+  font-size: 0.72rem;
+  color: hsl(var(--muted-foreground) / 0.8);
 }

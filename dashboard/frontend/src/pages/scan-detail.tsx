@@ -1,10 +1,21 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { AlertOctagon, Compass, Gauge, ListChecks, Play, Radar, ShieldAlert, XCircle } from "lucide-react";
+import {
+  AlertOctagon,
+  Compass,
+  Download,
+  Gauge,
+  ListChecks,
+  Play,
+  Radar,
+  ShieldAlert,
+  XCircle,
+} from "lucide-react";
 
 import { DataState } from "@/components/common/data-state";
 import { GateBadge } from "@/components/common/gate-badge";
 import { PageHeader } from "@/components/common/page-header";
+import { ScanPhases } from "@/components/common/scan-phases";
 import { SeverityBadge } from "@/components/common/severity-badge";
 import { FindingStatusBadge, ScanStatusBadge } from "@/components/common/status-badge";
 import { StatCard } from "@/components/common/stat-card";
@@ -25,7 +36,7 @@ import {
   scoreColor,
   titleCase,
 } from "@/lib/format";
-import type { ComparedFinding, ScanEvent } from "@/types/api";
+import type { ComparedFinding, Finding, Scan, ScanEvent } from "@/types/api";
 
 export function ScanDetailPage() {
   const params = useParams();
@@ -43,6 +54,7 @@ export function ScanDetailPage() {
 
   const [events, setEvents] = useState<ScanEvent[]>([]);
   const [cancelling, setCancelling] = useState(false);
+  const [downloadingReport, setDownloadingReport] = useState(false);
 
   // Seed the timeline from persisted events so a finished scan still shows it.
   useEffect(() => {
@@ -111,6 +123,35 @@ export function ScanDetailPage() {
     }
   }
 
+  async function handleDownloadRecommendations() {
+    if (!data) return;
+    setDownloadingReport(true);
+    try {
+      const findings = await getAllScanFindings(scanId);
+      const report = buildRecommendationsReport(data, findings.items, findings.complete);
+      const blob = new Blob([report], { type: "text/markdown;charset=utf-8" });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `${safeFilename(data.repository_name ?? "repository")}-scan-${scanId}-recommendations.md`;
+      document.body.append(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => window.URL.revokeObjectURL(url), 1000);
+      toast({
+        title: "Recommendations downloaded",
+        description: `Created a Markdown report for scan #${scanId}.`,
+        variant: "success",
+      });
+    } catch (error) {
+      const message =
+        error instanceof ApiError ? error.message : "The recommendations report could not be created.";
+      toast({ title: "Report download failed", description: message, variant: "error" });
+    } finally {
+      setDownloadingReport(false);
+    }
+  }
+
   return (
     <div className="space-y-6">
       <PageHeader
@@ -122,6 +163,24 @@ export function ScanDetailPage() {
         }
         actions={
           <>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={
+                !data ||
+                downloadingReport ||
+                data.status === "queued" ||
+                data.status === "running"
+              }
+              onClick={() => void handleDownloadRecommendations()}
+            >
+              <Download />
+              {downloadingReport
+                ? "Preparing report..."
+                : data?.status === "queued" || data?.status === "running"
+                  ? "Available after scan"
+                  : "Download recommendations"}
+            </Button>
             <Button variant="outline" size="sm" onClick={() => navigate("/scans/new")}>
               <Play />
               Run again
@@ -248,6 +307,16 @@ export function ScanDetailPage() {
 
             <Card>
               <CardHeader className="pb-2">
+                <CardTitle>Scan progress</CardTitle>
+                <CardDescription>The phases the engine works through, in order.</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <ScanPhases events={events} />
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader className="pb-2">
                 <CardTitle>Event timeline</CardTitle>
                 <CardDescription>Events emitted by the scan engine.</CardDescription>
               </CardHeader>
@@ -342,6 +411,183 @@ export function ScanDetailPage() {
       </DataState>
     </div>
   );
+}
+
+const FINDING_SEVERITIES = ["critical", "high", "medium", "low", "info"] as const;
+
+const MANUAL_REVIEW_AREAS = [
+  "Authentication, authorization, and access-control boundaries",
+  "Input validation, output encoding, and injection resistance",
+  "Secrets handling, privacy, and sensitive-data exposure",
+  "Dependency provenance, known vulnerabilities, and supply-chain controls",
+  "API contracts, data integrity, and database transaction behavior",
+  "Error handling, logging, monitoring, and recovery behavior",
+  "Performance, scalability, and resource-exhaustion behavior",
+  "Accessibility, keyboard navigation, and assistive-technology support",
+  "Deployment configuration, TLS, backups, and operational readiness",
+  "Test quality, edge cases, and regression coverage beyond this scan",
+  "Architecture boundaries, maintainability, and technical debt",
+  "User and operator documentation, setup, and incident procedures",
+];
+
+async function getAllScanFindings(
+  scanId: number,
+): Promise<{ items: Finding[]; complete: boolean }> {
+  const pageSize = 200;
+  const items: Finding[] = [];
+  let total = 0;
+  let offset = 0;
+
+  do {
+    const page = await api.findings.list({ scan_id: scanId, limit: pageSize, offset });
+    items.push(...page.items);
+    total = page.total;
+    if (!page.items.length) break;
+    offset += page.items.length;
+  } while (offset < total);
+
+  return { items, complete: items.length >= total };
+}
+
+function buildRecommendationsReport(scan: Scan, findings: Finding[], findingsComplete: boolean): string {
+  const actionableFindings = findings.filter(
+    (finding) => finding.status !== "resolved" && finding.status !== "dismissed",
+  );
+  const closedFindings = findings.length - actionableFindings.length;
+  const lines = [
+    `# Post-scan recommendations: ${scan.repository_name ?? "Unknown repository"}`,
+    "",
+    `Generated: ${new Date().toISOString()}`,
+    "",
+    "> This report is based on persisted results for this scan. Recommendations are not a substitute for reviewing the evidence and validating each change.",
+    "",
+    "## Scan summary",
+    "",
+    `- Scan: #${scan.id}`,
+    `- Repository: ${scan.repository_name ?? "Unknown"}`,
+    `- Source: ${scan.repository_source ?? "Not recorded"}`,
+    `- Status: ${titleCase(scan.status)}`,
+    `- Profile: ${scan.profile}`,
+    `- Commit: ${scan.commit_sha ?? "Not recorded"}`,
+    `- Score: ${scan.overall_score === null ? "Not available" : `${scan.overall_score.toFixed(1)} / 100`}`,
+    `- Gate: ${scan.gate ?? "Not recorded"}`,
+    `- Findings: ${findings.length}${findingsComplete ? "" : ` of ${scan.total_findings ?? "unknown"} loaded`}`,
+    `- Findings marked for action: ${actionableFindings.length}`,
+    `- Critical / high: ${scan.critical_count ?? "Not recorded"} / ${scan.high_count ?? "Not recorded"}`,
+    `- Test status: ${scan.test_status ?? "Not recorded"}`,
+    `- Tests executed / passed / failed / skipped: ${scan.tests_executed ?? "Not recorded"} / ${scan.tests_passed ?? "Not recorded"} / ${scan.tests_failed ?? "Not recorded"} / ${scan.tests_skipped ?? "Not recorded"}`,
+    "",
+    "## Prioritized recommendations",
+    "",
+  ];
+
+  lines.push(
+    `Resolved or dismissed findings excluded from the action list: ${closedFindings}.`,
+    "",
+  );
+  if (!actionableFindings.length) {
+    lines.push(
+      !findingsComplete
+        ? "No actionable findings were loaded, but the finding list is incomplete. Inspect the remaining results in the dashboard."
+        : findings.length
+          ? "No findings currently marked for action. Confirm resolved or dismissed findings remain valid and rerun the scan after changes."
+          : "No findings were recorded. Review the coverage gaps and manual checklist below; absence of findings does not prove the repository is defect-free.",
+      "",
+    );
+  } else {
+    for (const severity of FINDING_SEVERITIES) {
+      const group = actionableFindings.filter((finding) => finding.severity === severity);
+      if (!group.length) continue;
+      lines.push(`### ${titleCase(severity)} (${group.length})`, "");
+      for (const finding of group) {
+        lines.push(
+          `- **${finding.rule}** (${finding.module}; ${finding.status})`,
+          `  - Location: ${finding.file}:${finding.line}${finding.column ? `:${finding.column}` : ""}`,
+          `  - Finding: ${finding.message ?? "No message recorded."}`,
+          `  - Scanner suggestion: ${finding.suggestion ?? "No specific suggestion provided. Inspect the finding evidence, confirm it applies, make the smallest safe correction, and add regression coverage."}`,
+          `  - Confidence / fixable: ${finding.confidence ?? "Not recorded"} / ${finding.fixable ? "Yes" : "Not marked fixable"}`,
+        );
+      }
+      lines.push("");
+    }
+  }
+
+  if (!findingsComplete) {
+    lines.push(
+      "> Some findings could not be loaded. Treat the recommendations above as incomplete and open the scan in the dashboard to inspect the remaining results.",
+      "",
+    );
+  }
+
+  lines.push("## Test and coverage actions", "");
+  if (scan.tests_failed) {
+    lines.push(`- Fix the ${scan.tests_failed} failing test(s), then rerun the affected tests and the scan profile.`, "");
+  } else if (!scan.tests_executed) {
+    lines.push("- No tests are recorded as executed. Run the project test suite and ensure the scan profile is configured to execute tests where supported.", "");
+  } else if (scan.tests_skipped) {
+    lines.push(`- Review why ${scan.tests_skipped} test(s) were skipped and run them in an appropriate environment if possible.`, "");
+  } else if (scan.test_status) {
+    lines.push(`- Tests report \`${scan.test_status}\`. Preserve the passing checks and add regression tests for any fixes above.`, "");
+  } else {
+    lines.push("- Test execution status was not recorded. Verify test coverage independently and add regression checks for fixes.", "");
+  }
+
+  if (scan.coverage_gaps.length) {
+    lines.push("Coverage gaps reported by the scanner:", "");
+    for (const gap of scan.coverage_gaps) lines.push(`- ${gap}`);
+    lines.push("", "Resolve or explicitly accept each gap, then rerun the scan so the result reflects the additional coverage.", "");
+  } else {
+    lines.push("The scanner recorded no coverage gaps. This does not establish that every quality or security area was assessed.", "");
+  }
+
+  lines.push(
+    "## Scanner versions and options",
+    "",
+    "Recorded scanner versions:",
+    "",
+    "```json",
+    JSON.stringify(scan.scanner_versions, null, 2),
+    "```",
+    "",
+    "Recorded scan options:",
+    "",
+    "```json",
+    JSON.stringify(scan.options, null, 2),
+    "```",
+    "",
+  );
+
+  lines.push(
+    "## Broader manual review checklist",
+    "",
+    "These areas are not established by this scan report. Review them separately; scanner coverage should only be claimed where scan evidence explicitly supports it.",
+    "",
+  );
+  for (const area of MANUAL_REVIEW_AREAS) {
+    lines.push(`- [ ] **Not assessed by this scan:** ${area}`);
+  }
+
+  lines.push(
+    "",
+    "## Verification before closing",
+    "",
+    "- Review each finding's evidence and confirm it is valid before changing code.",
+    "- Fix root causes without suppressing scanner rules, weakening tests, or hiding findings.",
+    "- Add or update regression tests and run the relevant test suite.",
+    "- Rerun the same scan profile against the updated commit and compare fresh findings.",
+    "- Verify the gate passes and target a score of 97 or higher; report only what the new scan confirms.",
+    "",
+  );
+
+  return lines.join("\n");
+}
+
+function safeFilename(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "") || "repository";
 }
 
 export function ScanComparePage() {

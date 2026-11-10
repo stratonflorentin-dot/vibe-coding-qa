@@ -1,6 +1,8 @@
 import { useState, type ReactNode } from "react";
 import { Outlet } from "react-router-dom";
 
+import { AssistantLauncher } from "@/components/layout/assistant-launcher";
+import { SplashScreen } from "@/components/layout/splash-screen";
 import { Sidebar } from "@/components/layout/sidebar";
 import { Topbar } from "@/components/layout/topbar";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
@@ -12,6 +14,7 @@ export function AppShell({ children }: { children?: ReactNode }) {
 
   return (
     <TooltipProvider delayDuration={200}>
+      <SplashScreen />
       <div className="app-gradient flex h-full min-h-screen bg-background">
         <aside className="hidden w-60 shrink-0 lg:block">
           <div className="sticky top-0 h-screen">
@@ -31,6 +34,7 @@ export function AppShell({ children }: { children?: ReactNode }) {
             <div className="mx-auto w-full max-w-7xl space-y-6">{children ?? <Outlet />}</div>
           </main>
         </div>
+        <AssistantLauncher />
       </div>
     </TooltipProvider>
   );

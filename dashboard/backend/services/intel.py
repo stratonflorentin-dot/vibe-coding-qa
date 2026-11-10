@@ -7,6 +7,8 @@ invented — when the data is missing the response says so.
 
 from __future__ import annotations
 
+import threading
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
@@ -17,6 +19,60 @@ from ..persistence.store import Store
 from .paths import repository_dir
 
 _OSV_MAX_LOOKUPS = 40
+
+# Profiling a repository (``analyze_repo``) walks the working tree and is by far
+# the most expensive step behind the Architecture and Dependencies pages. The
+# source only changes when the repo is re-scanned or edited, so memoise the
+# result per working-tree root for a short window. Without this, every page load
+# re-profiled the whole repo from scratch, which left those pages hanging on
+# large repositories.
+_PROFILE_TTL_SECONDS = 600.0
+_PROFILE_CACHE_MAX = 32
+_profile_cache: dict[str, tuple[float, object]] = {}
+_profile_lock = threading.Lock()
+
+
+def _profile_cached(root: Path):
+    """``analyze_repo(root)`` with a bounded, time-based cache."""
+    key = str(root.resolve())
+    now = time.monotonic()
+    with _profile_lock:
+        cached = _profile_cache.get(key)
+        if cached is not None and now - cached[0] < _PROFILE_TTL_SECONDS:
+            return cached[1]
+    # Compute outside the lock so different repositories can profile concurrently.
+    profile = analyze_repo(root)
+    with _profile_lock:
+        _profile_cache[key] = (now, profile)
+        if len(_profile_cache) > _PROFILE_CACHE_MAX:
+            oldest = min(_profile_cache, key=lambda item: _profile_cache[item][0])
+            _profile_cache.pop(oldest, None)
+    return profile
+
+
+def _profile_dict(store: Store, repository: dict, root: Path | None) -> dict:
+    """The repository profile as a plain dict (AppProfile.to_dict shape).
+
+    Prefers the profile persisted when the repo was last scanned, so the page
+    renders instantly. Otherwise it profiles the working tree once (cached) and
+    persists the result, so every later load - including after a restart - is
+    instant too. Returns ``{}`` when nothing is available.
+    """
+    persisted = store.get_setting(f"profile:{repository['id']}")
+    if isinstance(persisted, dict) and persisted:
+        return persisted
+    if root is None:
+        return {}
+    try:
+        computed = _profile_cached(root).to_dict()
+    except Exception:  # noqa: BLE001
+        return {}
+    if computed:
+        try:
+            store.set_setting(f"profile:{repository['id']}", computed)
+        except Exception:  # noqa: BLE001
+            pass
+    return computed
 
 
 def _source_node_for(file: str, module: str) -> str:
@@ -55,13 +111,9 @@ def build_architecture(store: Store, repository: dict) -> dict:
     add_node("app", "application", repository["name"],
              source=repository["source"], source_type=repository["source_type"])
 
-    architecture: dict = {}
-    if root is not None:
-        try:
-            profile = analyze_repo(root)
-            architecture = profile.to_dict()
-        except Exception:  # noqa: BLE001
-            notes.append("The repository could not be profiled; only persisted data is shown.")
+    architecture = _profile_dict(store, repository, root)
+    if not architecture and root is not None:
+        notes.append("The repository could not be profiled; only persisted data is shown.")
 
     if root is None and repository["source_type"] != "local":
         notes.append("This remote repository has not been scanned yet, so no working tree is available.")
@@ -100,7 +152,14 @@ def build_architecture(store: Store, repository: dict) -> dict:
     findings_by_node: dict[str, list[dict]] = {}
     latest = store.latest_completed_scan(repository["id"])
     if latest:
-        findings, _ = store.list_findings(scan_id=latest["id"], limit=500)
+        findings = []
+        offset = 0
+        while True:
+            page, total = store.list_findings(scan_id=latest["id"], limit=200, offset=offset)
+            findings.extend(page)
+            if not page or len(findings) >= total:
+                break
+            offset += len(page)
         for finding in findings:
             node_id = _source_node_for(finding["file"], finding["module"])
             if node_id != "app" and not any(node["id"] == node_id for node in nodes):
@@ -108,6 +167,7 @@ def build_architecture(store: Store, repository: dict) -> dict:
             findings_by_node.setdefault(node_id, []).append({
                 "id": finding["id"],
                 "rule": finding["rule"],
+                "module": finding["module"],
                 "severity": finding["severity"],
                 "file": finding["file"],
                 "line": finding["line"],
@@ -144,18 +204,14 @@ def build_dependencies(store: Store, repository: dict, *, osv: bool) -> dict:
             "osv_checked": False,
         }
 
-    try:
-        profile = analyze_repo(root)
-    except Exception:  # noqa: BLE001
-        profile = None
+    pdict = _profile_dict(store, repository, root)
 
     direct: dict[str, str | None] = {}
-    if profile is not None:
-        for name, version in profile.dependencies.items():
-            direct[name] = None if version in ("*", "") else version
+    for name, version in (pdict.get("dependencies") or {}).items():
+        direct[name] = None if version in ("*", "") else version
 
-    lockfiles = list(profile.lockfiles) if profile else []
-    package_manager = profile.package_manager if profile else None
+    lockfiles = list(pdict.get("lockfiles") or [])
+    package_manager = pdict.get("package_manager")
 
     resolved: dict[str, dict] = {}
     try:
