@@ -12,12 +12,17 @@ from vibe_coding_qa.profile import analyze_repo
 
 from ..config import Settings
 from ..persistence.store import Store
-from ..security import ValidationError, resolve_repo_path, validate_git_source
+from ..security import ValidationError, resolve_repo_path, validate_git_source, validate_web_target
 
 
 def _derive_name(source: str, source_type: str) -> str:
     if source_type == "local":
         return Path(source).name or source
+    if source_type == "url":
+        from urllib.parse import urlsplit
+
+        parsed = urlsplit(source)
+        return parsed.netloc or source
     cleaned = source.rstrip("/")
     if cleaned.endswith(".git"):
         cleaned = cleaned[:-4]
@@ -57,6 +62,10 @@ class RepositoryService:
         elif source_type == "github":
             normalized = validate_git_source(source)
             metadata = {}
+        elif source_type == "url":
+            # A live target is validated but never contacted at registration time.
+            normalized = validate_web_target(source)
+            metadata = {}
         else:
             raise ValidationError(f"Unsupported repository source type: {source_type}")
 
@@ -75,7 +84,7 @@ class RepositoryService:
         repo = self.require(repository_id)
         if repo["source_type"] != "local":
             raise ValidationError(
-                "Metadata for remote repositories is captured when they are scanned."
+                "Metadata for remote repositories and live targets is captured when they are scanned."
             )
         resolved = resolve_repo_path(repo["source"], self.settings.allowed_repo_roots)
         metadata = self._detect(resolved)

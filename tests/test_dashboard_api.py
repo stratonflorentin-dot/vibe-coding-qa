@@ -281,6 +281,108 @@ class DashboardApiTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 400)
 
+    def test_web_target_registration_and_validation(self):
+        created = self.client.post(
+            "/api/repositories",
+            json={"source": "example.test/app", "source_type": "url"},
+        )
+        self.assertEqual(created.status_code, 201, created.text)
+        body = created.json()
+        self.assertEqual(body["source_type"], "url")
+        # A bare host is normalised to https and the path is preserved.
+        self.assertEqual(body["source"], "https://example.test/app")
+        self.assertEqual(body["name"], "example.test")
+
+        unsupported = self.client.post(
+            "/api/repositories", json={"source": "ftp://example.test", "source_type": "url"}
+        )
+        self.assertEqual(unsupported.status_code, 400)
+
+        embedded = self.client.post(
+            "/api/repositories",
+            json={"source": _assemble("https://user:", "pass@example.test"), "source_type": "url"},
+        )
+        self.assertEqual(embedded.status_code, 400)
+
+        duplicate = self.client.post(
+            "/api/repositories", json={"source": "https://example.test/app", "source_type": "url"}
+        )
+        self.assertEqual(duplicate.status_code, 400)
+
+    def test_web_scan_runs_and_persists_findings(self):
+        from pathlib import PurePosixPath
+        from unittest.mock import patch
+
+        from vibe_coding_qa import Finding, ModuleResult, ScanResult, Severity, Status
+        from vibe_coding_qa.gates import assess
+
+        repository_id = self.client.post(
+            "/api/repositories", json={"source": "https://example.test", "source_type": "url"}
+        ).json()["id"]
+
+        def fake_run_web_scan(target, *, progress=None, minimum_score=None, limits=None):
+            finding = Finding(
+                rule="web:missing-hsts",
+                module="web",
+                severity=Severity.MEDIUM,
+                file=PurePosixPath("/"),
+                line=0,
+                message="Strict-Transport-Security is missing.",
+                suggestion="Send Strict-Transport-Security.",
+            )
+            module = ModuleResult(
+                module="web", status=Status.PASS, score=100.0, findings=[finding],
+                notes=["1 read-only request made"],
+            )
+            result = ScanResult(repo=Path(target.split("://", 1)[-1]), modules=[module])
+            result.tests = {
+                "status": Status.SKIP,
+                "execution_mode": "not_applicable",
+                "test_reason": "web_target_no_test_suite",
+                "target_kind": "web",
+            }
+            assess(result, minimum_score=minimum_score)
+            return result
+
+        with patch("dashboard.backend.services.scans.run_web_scan", side_effect=fake_run_web_scan):
+            response = self.client.post(
+                "/api/scans", json={"repository_id": repository_id, "profile": "web_security"}
+            )
+            self.assertEqual(response.status_code, 202, response.text)
+            scan = _wait_for_scan(self.client, response.json()["id"])
+
+        self.assertEqual(scan["status"], "completed")
+        self.assertEqual(scan["total_findings"], 1)
+        # A live target has no test suite, so an unverified gate is the honest verdict.
+        self.assertEqual(scan["gate"], "not_verified")
+        self.assertEqual(scan["test_status"], "skip")
+        self.assertTrue(any("black-box" in gap for gap in scan["coverage_gaps"]))
+
+        findings = self.client.get("/api/findings", params={"scan_id": scan["id"]}).json()
+        self.assertEqual(findings["total"], 1)
+        self.assertEqual(findings["items"][0]["module"], "web")
+
+    def test_single_scan_can_be_deleted(self):
+        repository_id = self._register_sample_repo()
+        keep = self._run_quick_scan(repository_id)
+        remove = self._run_quick_scan(repository_id)
+        self.assertGreater(
+            self.client.get("/api/findings", params={"scan_id": remove["id"]}).json()["total"], 0
+        )
+
+        deleted = self.client.delete(f"/api/scans/{remove['id']}")
+        self.assertEqual(deleted.status_code, 200, deleted.text)
+
+        self.assertEqual(self.client.get(f"/api/scans/{remove['id']}").status_code, 404)
+        # Findings cascade with the scan rather than being orphaned.
+        self.assertEqual(
+            self.client.get("/api/findings", params={"scan_id": remove["id"]}).json()["total"], 0
+        )
+        # The other scan is untouched.
+        self.assertEqual(self.client.get(f"/api/scans/{keep['id']}").status_code, 200)
+        # Deleting again reports it as no longer present.
+        self.assertEqual(self.client.delete(f"/api/scans/{remove['id']}").status_code, 404)
+
     # ---------------------------------------------------------------- dashboard
     def test_overview_reports_no_data_until_a_scan_completes(self):
         empty = self.client.get("/api/dashboard/overview").json()

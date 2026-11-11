@@ -179,6 +179,8 @@ export const scans = {
   create: (payload: { repository_id: number; profile: string; options?: ScanOptions }) =>
     request<Scan>("/api/scans", json("POST", payload)),
   cancel: (id: number) => request<Scan>(`/api/scans/${id}/cancel`, { method: "POST" }),
+  remove: (id: number) =>
+    request<{ detail: string }>(`/api/scans/${id}`, { method: "DELETE" }),
   events: (id: number, after = 0) =>
     request<ScanEvent[]>(`/api/scans/${id}/events.json${buildQuery({ after })}`),
   compare: (base: number, head: number) =>

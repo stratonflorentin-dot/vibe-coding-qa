@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 
 from ..profiles import get_profile
-from ..schemas import ScanCreate, ScanEventOut, ScanListOut, ScanOut
+from ..schemas import GenericMessage, ScanCreate, ScanEventOut, ScanListOut, ScanOut
 from ..security import ValidationError
 from ..services.intel import compare_scans
 from ..services.settings import scan_settings
@@ -90,6 +90,18 @@ def cancel_scan(scan_id: int, services: ServicesDep) -> dict:
     if scan is None:
         raise KeyError(f"Scan {scan_id} was not found.")
     return scan
+
+
+@router.delete("/api/scans/{scan_id}", response_model=GenericMessage)
+def delete_scan(scan_id: int, services: ServicesDep) -> dict:
+    """Delete one scan from the history, along with its findings and events."""
+    if services.store.get_scan(scan_id) is None:
+        raise KeyError(f"Scan {scan_id} was not found.")
+    try:
+        services.scans.delete(scan_id)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"detail": "Scan and its findings were deleted."}
 
 
 @router.get("/api/scans/{scan_id}/events.json", response_model=list[ScanEventOut])

@@ -50,6 +50,7 @@ export function NewScanPage() {
   const [profileKey, setProfileKey] = useState("");
   const [osv, setOsv] = useState(false);
   const [aiReview, setAiReview] = useState(false);
+  const [pentagi, setPentagi] = useState(false);
   const [staticOnly, setStaticOnly] = useState(false);
   const [explicitPermission, setExplicitPermission] = useState(false);
   const [testTimeoutRaw, setTestTimeoutRaw] = useState("");
@@ -86,10 +87,12 @@ export function NewScanPage() {
     [repositories, repositoryId],
   );
   const allowTestExecution = settings.data?.allow_test_execution ?? false;
+  const isWebTarget = selectedRepository?.source_type === "url";
 
   const options = useMemo<ScanOptions>(() => {
     const built: ScanOptions = { osv, ai_review: aiReview, static_only: staticOnly };
     if (explicitPermission) built.explicit_permission = true;
+    if (isWebTarget && pentagi) built.pentagi = true;
     const data = settings.data;
     if (data && !staticOnly) {
       if (testTimeoutRaw.trim() !== String(data.test_timeout)) {
@@ -120,6 +123,8 @@ export function NewScanPage() {
   }, [
     osv,
     aiReview,
+    pentagi,
+    isWebTarget,
     staticOnly,
     explicitPermission,
     testTimeoutRaw,
@@ -307,6 +312,15 @@ export function NewScanPage() {
                   checked={aiReview}
                   onChange={setAiReview}
                 />
+                {isWebTarget ? (
+                  <OptionRow
+                    id="pentagi"
+                    label="Also check the PentAGI pentest path"
+                    description="Records whether an optional PentAGI instance is reachable for this live target. Read-only: no pentest flow is started."
+                    checked={pentagi}
+                    onChange={setPentagi}
+                  />
+                ) : null}
                 <OptionRow
                   id="static-only"
                   label="Static analysis only"
@@ -479,6 +493,9 @@ export function NewScanPage() {
                 <FactRow label="Static analysis" value="Enabled" />
                 <FactRow label="OSV advisories" value={osv ? "Enabled" : "Disabled"} />
                 <FactRow label="AI review" value={aiReview ? "Requested" : "Not requested"} />
+                {isWebTarget ? (
+                  <FactRow label="PentAGI check" value={pentagi ? "Requested" : "Not requested"} />
+                ) : null}
                 <FactRow label="Test suite" value={testsWillRun ? "Runs in a Docker sandbox" : "Does not run"} />
                 <p className="text-xs text-muted-foreground">
                   Static analysis always runs.{" "}

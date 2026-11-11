@@ -10,9 +10,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from vibe_coding_qa.engine import run_pipeline, run_scan, run_tests
 from vibe_coding_qa.fixes import FixEngine
-from vibe_coding_qa.gates import assess, release_decision
+from vibe_coding_qa.gates import assess, coverage_gaps, release_decision
 from vibe_coding_qa.repo import load_repository
 from vibe_coding_qa.scanners.security import SecurityScanner
+from vibe_coding_qa.scanners.web import WebResponse, WebSecurityScanner
 
 
 # Synthetic credentials assembled at runtime so no secret literal is committed
@@ -117,6 +118,107 @@ class RepoLoaderTests(TestCase):
     def test_load_local_path(self):
         path = load_repository(str(Path(__file__).resolve().parent.parent))
         self.assertTrue(path.exists())
+
+
+class _FakeFetcher:
+    """Deterministic fetcher so the web scanner is tested without any network."""
+
+    def __init__(self, base: WebResponse, routes: dict | None = None):
+        self.base = base
+        self.routes = routes or {}
+        self.requests = 0
+
+    def get(self, url, *, follow=True, headers=None):
+        self.requests += 1
+        if url == self.base.url:
+            return self.base
+        if url in self.routes:
+            return self.routes[url]
+        return WebResponse(url=url, status=404, headers={"content-type": "text/plain"}, body=b"not found")
+
+    def options(self, url):
+        self.requests += 1
+        return WebResponse(url=url, status=204, headers={})
+
+
+class WebScannerTests(TestCase):
+    def _scanner(self, base: WebResponse, routes: dict | None = None) -> WebSecurityScanner:
+        fetcher = _FakeFetcher(base, routes)
+        return WebSecurityScanner(base.url, fetcher=fetcher)
+
+    def test_flags_plain_http_and_exposed_env_file(self):
+        base = WebResponse(
+            url="http://example.test",
+            status=200,
+            headers={"content-type": "text/html"},
+            body=b"<!doctype html><html><body>hello</body></html>",
+        )
+        routes = {
+            "http://example.test/.env": WebResponse(
+                url="http://example.test/.env",
+                status=200,
+                headers={"content-type": "text/plain"},
+                body=b"SECRET_KEY=abc123\nDB_PASSWORD=hunter2\n",
+            ),
+        }
+        findings = self._scanner(base, routes).scan()
+        rules = {f.rule for f in findings}
+        self.assertIn("web:insecure-transport", rules)
+        self.assertIn("web:exposed-env-file", rules)
+
+        env = next(f for f in findings if f.rule == "web:exposed-env-file")
+        self.assertEqual(env.severity.value, "critical")
+        self.assertEqual(str(env.file), "/.env")
+        # A URL path is the location, so there is no fake source line number.
+        self.assertEqual(env.line, 0)
+
+    def test_catchall_routing_does_not_produce_false_positives(self):
+        body = b"<!doctype html><html><body>single page app</body></html>"
+        base = WebResponse(
+            url="http://example.test",
+            status=200,
+            headers={"content-type": "text/html"},
+            body=body,
+        )
+        # Every unknown path answers 200 with the app shell: that is routing, not exposure.
+        routes = {
+            "http://example.test/.DS_Store": WebResponse(
+                url="http://example.test/.DS_Store",
+                status=200,
+                headers={"content-type": "application/octet-stream"},
+                body=body,
+            ),
+            "http://example.test/backup.zip": WebResponse(
+                url="http://example.test/backup.zip",
+                status=200,
+                headers={"content-type": "application/zip"},
+                body=body,
+            ),
+        }
+        rules = {f.rule for f in self._scanner(base, routes).scan()}
+        self.assertNotIn("web:exposed-ds-store", rules)
+        self.assertNotIn("web:exposed-backup", rules)
+
+    def test_missing_security_headers_are_reported(self):
+        base = WebResponse(
+            url="http://example.test",
+            status=200,
+            headers={"content-type": "text/html"},
+            body=b"<html><body>hi</body></html>",
+        )
+        rules = {f.rule for f in self._scanner(base).scan()}
+        self.assertIn("web:missing-csp", rules)
+        self.assertIn("web:clickjacking", rules)
+
+    def test_web_target_gaps_are_web_specific(self):
+        from vibe_coding_qa import ModuleResult, ScanResult, Status
+
+        result = ScanResult(repo=Path("example.test"), modules=[ModuleResult(module="web", status=Status.PASS, score=100.0)])
+        result.tests = {"status": Status.SKIP, "execution_mode": "not_applicable", "target_kind": "web"}
+        gaps = coverage_gaps(result)
+        self.assertTrue(any("black-box" in gap for gap in gaps))
+        # Repository-oriented gaps (lockfiles, CI, .gitignore) must not appear.
+        self.assertFalse(any("lockfile" in gap for gap in gaps))
 
 
 if __name__ == "__main__":

@@ -7,6 +7,7 @@ from . import Finding, ModuleResult, ScanResult, Severity, Status
 
 
 MODULE_WEIGHTS = {
+    "web": 1.5,
     "security": 1.5,
     "database": 1.4,
     "dependencies": 1.2,
@@ -31,6 +32,7 @@ CONFIDENCE_MULTIPLIER = {
 }
 
 EXPLOITABILITY_MULTIPLIER = {
+    "web": 1.2,
     "security": 1.5,
     "database": 1.4,
     "dependencies": 1.2,
@@ -269,6 +271,14 @@ def release_decision(result: ScanResult) -> str:
 
 def coverage_gaps(result: ScanResult) -> list[str]:
     gaps: list[str] = []
+    if result.tests.get("target_kind") == "web":
+        # A live target has no working tree: the repository-oriented checks below
+        # (tests, lockfiles, CI, .gitignore) simply do not apply.
+        gaps.append("A live target is checked black-box: only publicly reachable responses were inspected.")
+        gaps.append("Authenticated areas and destructive actions were not exercised.")
+        if result.tests.get("status") == "skip":
+            gaps.append("No test suite applies to a live target, so runtime behavior is unverified.")
+        return gaps
     architecture = result.tests.get("architecture", {})
     if not architecture.get("has_tests"):
         gaps.append("No automated test runner detected; runtime behavior is unverified.")

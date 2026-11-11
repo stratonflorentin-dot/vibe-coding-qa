@@ -123,6 +123,38 @@ PROFILES: dict[str, ScanProfile] = {
         minimum_score=60,
         notes=("Runs the npm/vitest/jest suite only with explicit permission.",),
     ),
+    "web_security": ScanProfile(
+        key="web_security",
+        name="Web Security Scan",
+        description=(
+            "Read-only checks against a deployed website or app URL: HTTPS/TLS, "
+            "security headers, cookie flags, CORS, information disclosure and "
+            "conventionally sensitive paths."
+        ),
+        modules=("web",),
+        run_tests=False,
+        osv=False,
+        ai_review=False,
+        minimum_score=60,
+        notes=(
+            "Read-only: no exploitation and no authentication is attempted.",
+            "Only applies to website/app URL targets.",
+        ),
+    ),
+    "web_deep": ScanProfile(
+        key="web_deep",
+        name="Web Security Scan + AI review",
+        description="The full read-only web checks plus an optional AI review of the results.",
+        modules=("web",),
+        run_tests=False,
+        osv=False,
+        ai_review=True,
+        minimum_score=60,
+        notes=(
+            "Read-only: no exploitation and no authentication is attempted.",
+            "Requires a configured AI provider for the review stage.",
+        ),
+    ),
 }
 
 DEFAULT_PROFILE = "standard"

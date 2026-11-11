@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { ArrowRight, Copy, Radar, Sparkles, WandSparkles } from "lucide-react";
+import { ArrowRight, Copy, Radar, Sparkles, Trash2, WandSparkles } from "lucide-react";
 
 import { useApp } from "@/app/app-context";
 import { DataState } from "@/components/common/data-state";
@@ -61,6 +61,8 @@ export function ScansPage() {
   const [executiveSummary, setExecutiveSummary] = useState("");
   const [promptLoading, setPromptLoading] = useState(false);
   const [promptError, setPromptError] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Scan | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const scans = useAsync(
     () =>
@@ -158,6 +160,26 @@ export function ScansPage() {
       (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
     );
     navigate(`/scans/compare?base=${ordered[0].id}&head=${ordered[1].id}`);
+  }
+
+  async function handleDeleteScan() {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    try {
+      await api.scans.remove(deleteTarget.id);
+      toast({ title: "Scan deleted", description: `Scan #${deleteTarget.id} was removed.`, variant: "success" });
+      setSelected((current) => current.filter((item) => item.id !== deleteTarget.id));
+      setDeleteTarget(null);
+      await reloadScans();
+    } catch (caught) {
+      toast({
+        title: "Delete failed",
+        description: caught instanceof ApiError ? caught.message : "The request failed.",
+        variant: "error",
+      });
+    } finally {
+      setDeleting(false);
+    }
   }
 
   return (
@@ -348,6 +370,16 @@ export function ScansPage() {
                               <Button asChild variant="ghost" size="sm">
                                 <Link to={`/scans/${scan.id}`}>Open scan</Link>
                               </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="text-destructive hover:text-destructive"
+                                disabled={scan.status === "queued" || scan.status === "running"}
+                                onClick={() => setDeleteTarget(scan)}
+                              >
+                                <Trash2 />
+                                Delete
+                              </Button>
                             </div>
                           </TableCell>
                         </TableRow>
@@ -464,6 +496,32 @@ export function ScansPage() {
             >
               <Copy />
               Copy prompt
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={deleteTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) setDeleteTarget(null);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete scan</DialogTitle>
+            <DialogDescription>
+              This removes scan #{deleteTarget?.id} and all of its findings from the history. This
+              cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteTarget(null)} disabled={deleting}>
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={() => void handleDeleteScan()} disabled={deleting}>
+              <Trash2 />
+              Delete scan
             </Button>
           </DialogFooter>
         </DialogContent>

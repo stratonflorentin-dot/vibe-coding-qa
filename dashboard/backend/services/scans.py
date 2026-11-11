@@ -24,7 +24,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from vibe_coding_qa.engine import run_pipeline
+from vibe_coding_qa.engine import run_pipeline, run_web_scan
 from vibe_coding_qa.gates import coverage_gaps
 from vibe_coding_qa.scanners.dependencies import reset_osv_enabled, set_osv_enabled
 
@@ -118,6 +118,30 @@ class ScanRunner:
         self._submit(scan["id"])
         return scan
 
+    def delete(self, scan_id: int) -> bool:
+        """Remove a finished scan and its findings/events.
+
+        A running or queued scan is refused: a worker is still writing to it, and
+        deleting under the worker would leave it writing to a vanished row.
+        """
+        scan = self.store.get_scan(scan_id)
+        if scan is None:
+            return False
+        if scan["status"] in ("queued", "running"):
+            raise RuntimeError(
+                "This scan is still running. Cancel it and wait for it to stop before deleting."
+            )
+        deleted = self.store.delete_scan(scan_id)
+        if deleted:
+            repository = self.store.get_repository(scan["repository_id"])
+            if repository and repository.get("last_scan_id") == scan_id:
+                remaining, _ = self.store.list_scans(repository_id=scan["repository_id"], limit=1)
+                self.store.update_repository(
+                    scan["repository_id"],
+                    last_scan_id=remaining[0]["id"] if remaining else None,
+                )
+        return deleted
+
     def cancel(self, scan_id: int) -> dict | None:
         scan = self.store.get_scan(scan_id)
         if scan is None:
@@ -164,12 +188,43 @@ class ScanRunner:
             self.store.update_scan(scan_id, status="running", started_at=_now())
             self.store.add_event(scan_id, "started", status="running", message="Scan started")
 
+            def progress(stage: str, status: str, message: str = "", data: dict | None = None) -> None:
+                self.store.add_event(scan_id, stage, status=status, message=message, data=data or {})
+
+            if repository["source_type"] == "url":
+                # A live target (website/app) is never cloned: run the read-only
+                # web checks instead of the repository pipeline.
+                result = run_web_scan(
+                    repository["source"],
+                    progress=progress,
+                    minimum_score=profile.minimum_score,
+                )
+                self.store.add_event(
+                    scan_id, "tests", status="skipped",
+                    message="Test execution skipped: a live target has no test suite.",
+                )
+                if options.get("pentagi"):
+                    from ..pentagi import probe as pentagi_probe
+
+                    report = pentagi_probe()
+                    if report.get("reachable"):
+                        self.store.add_event(
+                            scan_id, "pentagi", status="completed",
+                            message="PentAGI is reachable (read-only status check; no flow was started).",
+                            data={key: value for key, value in report.items() if key != "configured"},
+                        )
+                    else:
+                        self.store.add_event(
+                            scan_id, "pentagi", status="skipped",
+                            message=f"PentAGI was not used: {report.get('detail', 'not configured')}",
+                        )
+                self._persist_result(scan_id, repository, result, profile, ai_requested=False)
+                self._complete(scan_id, started, result)
+                return
+
             source_path = self._prepare_source(repository, scan_id)
             if source_path is None:
                 return
-
-            def progress(stage: str, status: str, message: str = "", data: dict | None = None) -> None:
-                self.store.add_event(scan_id, stage, status=status, message=message, data=data or {})
 
             static_only = bool(options.get("static_only"))
             run_tests_flag = bool(profile.run_tests) and not static_only
@@ -225,18 +280,21 @@ class ScanRunner:
 
             self._persist_result(scan_id, repository, result, profile, ai_requested)
 
-            duration_ms = int((time.time() - started) * 1000)
-            self.store.update_scan(scan_id, duration_ms=duration_ms)
-            self.store.add_event(
-                scan_id, "completed", status="completed",
-                message=f"Scan complete: {result.gate}",
-                data={"gate": result.gate, "score": result.overall_score},
-            )
+            self._complete(scan_id, started, result)
         except Exception as exc:  # noqa: BLE001 - never let a worker die silently
             self._fail(scan_id, safe_error(exc, "The scan failed while running."))
         finally:
             with self._lock:
                 self._submitted.discard(scan_id)
+
+    def _complete(self, scan_id: int, started: float, result) -> None:
+        duration_ms = int((time.time() - started) * 1000)
+        self.store.update_scan(scan_id, duration_ms=duration_ms)
+        self.store.add_event(
+            scan_id, "completed", status="completed",
+            message=f"Scan complete: {result.gate}",
+            data={"gate": result.gate, "score": result.overall_score},
+        )
 
     # -------------------------------------------------------------- internals
     def _prepare_source(self, repository: dict, scan_id: int) -> Path | None:

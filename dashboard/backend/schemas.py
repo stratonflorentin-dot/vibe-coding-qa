@@ -6,7 +6,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
-SourceType = Literal["local", "github"]
+SourceType = Literal["local", "github", "url"]
 ScanStatus = Literal["queued", "running", "completed", "failed", "cancelled"]
 FindingStatus = Literal["open", "reviewed", "resolved", "dismissed", "unverified"]
 Severity = Literal["critical", "high", "medium", "low", "info"]
@@ -83,6 +83,7 @@ class ScanOptions(BaseModel):
     max_write_mb: int | None = Field(default=None, ge=2, le=2048)
     osv: bool | None = None
     ai_review: bool | None = None
+    pentagi: bool = False
     share_source_context: bool = False
 
 

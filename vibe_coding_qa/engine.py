@@ -12,6 +12,7 @@ import time
 import uuid
 from pathlib import Path
 from typing import Any, Callable
+from urllib.parse import urlsplit
 
 from . import ModuleResult, ScanResult, Severity, Status
 from .ai_review import get_ai_provider, review_findings
@@ -848,6 +849,52 @@ def run_pipeline(
     finally:
         if workdir and not keep_clone and str(workdir) != str(Path(source).resolve()):
             cleanup_repo(workdir)
+
+
+def run_web_scan(
+    target: str,
+    *,
+    progress: "ProgressCallback | None" = None,
+    minimum_score: int | None = None,
+    limits: Any = None,
+) -> ScanResult:
+    """Run the read-only web checks against a deployed website or app URL.
+
+    The target is not a repository: nothing is cloned and no file is read, so the
+    result carries a single ``web`` module. No test suite exists for a live site,
+    so the test status is recorded as skipped rather than invented - which is why
+    a clean web scan reports a gate of "not verified" instead of "pass".
+    """
+    from .scanners.web import WebSecurityScanner
+
+    _emit(progress, "preparation", "running", "Connecting to the target")
+    scanner = WebSecurityScanner(target, limits=limits)
+    _emit(progress, "scanner", "running", "Running web analysis", {"module": "web"})
+    findings = scanner.scan()
+    _emit(
+        progress, "scanner", "completed", "web analysis complete",
+        {"module": "web", "findings": len(findings)},
+    )
+
+    module = ModuleResult(
+        module="web", status=Status.PASS, score=100.0, findings=findings, notes=scanner.notes
+    )
+    result = ScanResult(repo=Path(urlsplit(target).netloc or target), modules=[module])
+    result.tests = {
+        "status": Status.SKIP,
+        "execution_mode": "not_applicable",
+        "test_reason": "web_target_no_test_suite",
+        "target_kind": "web",
+    }
+
+    _emit(progress, "gate", "running", "Assessing release gate")
+    assessment = assess(result, minimum_score=minimum_score)
+    result._assessment = assessment
+    _emit(
+        progress, "gate", "completed",
+        f"Release gate: {assessment.get('gate', 'unknown')}", {"gate": assessment.get("gate")},
+    )
+    return result
 
 
 def critical_summary(result: ScanResult) -> str:

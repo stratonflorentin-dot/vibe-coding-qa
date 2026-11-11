@@ -113,6 +113,37 @@ def validate_git_source(source: str) -> str:
     return candidate
 
 
+def validate_web_target(source: str) -> str:
+    """Validate a website or app URL before the scanner is allowed to request it.
+
+    Only absolute ``http``/``https`` targets are accepted. Credentials, fragments
+    and other schemes are rejected so the scan feature cannot be turned into a
+    generic network or filesystem proxy. Registering a target does not contact
+    it; the first request happens when a scan actually runs.
+    """
+    candidate = (source or "").strip()
+    if not candidate:
+        raise ValidationError("A website or app URL is required.")
+    if "://" not in candidate:
+        candidate = f"https://{candidate}"
+    from urllib.parse import urlsplit
+
+    parsed = urlsplit(candidate)
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        raise ValidationError("The target must be an absolute http:// or https:// URL.")
+    if parsed.username or parsed.password:
+        raise ValidationError("Target URLs must not contain embedded credentials.")
+    if parsed.fragment:
+        raise ValidationError("Target URLs must not contain a fragment.")
+    try:
+        parsed.port
+    except ValueError:
+        raise ValidationError("The target URL has an invalid port.") from None
+    path = parsed.path.rstrip("/")
+    query = f"?{parsed.query}" if parsed.query else ""
+    return f"{parsed.scheme}://{parsed.netloc}{path}{query}"
+
+
 class RateLimiter:
     """A simple thread-safe fixed-window rate limiter."""
 

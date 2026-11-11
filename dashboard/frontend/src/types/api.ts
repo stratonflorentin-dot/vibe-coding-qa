@@ -1,6 +1,6 @@
 /** Shared response/request types. These mirror the FastAPI schemas exactly. */
 
-export type SourceType = "local" | "github";
+export type SourceType = "local" | "github" | "url";
 export type ScanStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
 export type FindingStatus = "open" | "reviewed" | "resolved" | "dismissed" | "unverified";
 export type Severity = "critical" | "high" | "medium" | "low" | "info";
@@ -76,6 +76,7 @@ export interface ScanOptions {
   max_write_mb?: number | null;
   osv?: boolean | null;
   ai_review?: boolean | null;
+  pentagi?: boolean;
   share_source_context?: boolean;
 }
 

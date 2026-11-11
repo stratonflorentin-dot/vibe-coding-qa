@@ -125,7 +125,7 @@ export function RepositoriesPage() {
     <div className="space-y-6">
       <PageHeader
         title="Repositories"
-        description="Register the codebases the engine is allowed to analyse."
+        description="Register the codebases or live websites/apps the engine is allowed to analyse."
         actions={
           <Button size="sm" onClick={() => setAddOpen(true)}>
             <Plus />
@@ -241,7 +241,7 @@ export function RepositoriesPage() {
           <EmptyState
             icon={GitBranchPlus}
             title="No repositories registered"
-            description="Add a local path or a GitHub URL to start running scans."
+            description="Add a local path, a GitHub URL, or a website/app URL to start running scans."
             action={
               <Button size="sm" onClick={() => setAddOpen(true)}>
                 <Plus />
@@ -281,7 +281,9 @@ export function RepositoriesPage() {
                 placeholder={
                   sourceType === "github"
                     ? "https://github.com/org/repo"
-                    : "/absolute/path/to/repo"
+                    : sourceType === "url"
+                      ? "https://app.example.com"
+                      : "/absolute/path/to/repo"
                 }
                 required
               />
@@ -296,6 +298,7 @@ export function RepositoriesPage() {
                 <SelectContent>
                   <SelectItem value="local">Local path</SelectItem>
                   <SelectItem value="github">GitHub URL</SelectItem>
+                  <SelectItem value="url">Website / app URL</SelectItem>
                 </SelectContent>
               </Select>
             </div>
