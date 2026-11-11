@@ -1,6 +1,6 @@
 import { ChevronDown, Search, ShieldAlert } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 
 import { useApp } from "@/app/app-context";
 import { DataState } from "@/components/common/data-state";
