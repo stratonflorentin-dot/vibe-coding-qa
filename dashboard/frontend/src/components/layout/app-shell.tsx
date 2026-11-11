@@ -18,7 +18,7 @@ export function AppShell({ children }: { children?: ReactNode }) {
     <TooltipProvider delayDuration={200}>
       <SplashScreen />
       <div className="app-gradient flex h-full min-h-screen bg-background">
-        <aside className="hidden w-60 shrink-0 lg:block">
+        <aside className="hidden w-64 shrink-0 border-r border-sidebar-border bg-sidebar lg:block">
           <div className="sticky top-0 h-screen">
             <Sidebar />
           </div>

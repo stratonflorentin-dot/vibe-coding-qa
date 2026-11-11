@@ -61,7 +61,9 @@ _SCRYPT_R = 8
 _SCRYPT_P = 1
 _DKLEN = 32
 MIN_PASSWORD_LENGTH = 10
-_USERNAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{1,62}$")
+# Allow email addresses as usernames (@ and +), alongside the usual identifier
+# characters. Must start alphanumeric and stay 2-63 characters.
+_USERNAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.+@-]{1,62}$")
 
 
 class PasswordPolicyError(ValueError):
@@ -72,7 +74,8 @@ def validate_username(username: str) -> str:
     name = (username or "").strip()
     if not _USERNAME_RE.match(name):
         raise PasswordPolicyError(
-            "Username must be 2-63 characters: letters, digits, dot, dash or underscore."
+            "Username must be 2-63 characters using letters, digits or . _ - + @ "
+            "(an email address is fine)."
         )
     return name
 
