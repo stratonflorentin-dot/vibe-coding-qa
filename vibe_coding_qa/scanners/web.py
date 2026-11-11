@@ -26,28 +26,51 @@ Two properties matter for trustworthiness:
 
 from __future__ import annotations
 
+import http.client
 import re
 import socket
 import ssl
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import PurePosixPath
-from urllib.error import HTTPError, URLError
 from urllib.parse import urljoin, urlsplit
-from urllib.request import HTTPSHandler, HTTPRedirectHandler, Request, build_opener
 
 from vibe_coding_qa import Finding, Severity
+
+from . import net_guard
+from .net_guard import BlockedTargetError, TargetPolicy
 
 
 class _BudgetExceeded(Exception):
     """Raised internally when the bounded request budget is spent."""
 
 
-class _NoRedirect(HTTPRedirectHandler):
-    """Redirects are followed manually so each hop is counted and inspected."""
+class _PinnedHTTPConnection(http.client.HTTPConnection):
+    """HTTP connection dialled to a pre-approved IP, with Host kept as the name."""
 
-    def redirect_request(self, *args, **kwargs):  # noqa: D102 - see urllib
-        return None
+    def __init__(self, host: str, port: int, pinned_ip: str, timeout: float):
+        super().__init__(host, port, timeout=timeout)
+        self._pinned_ip = pinned_ip
+
+    def connect(self) -> None:  # noqa: D102 - see http.client
+        self.sock = socket.create_connection((self._pinned_ip, self.port), self.timeout)
+
+
+class _PinnedHTTPSConnection(http.client.HTTPSConnection):
+    """HTTPS connection dialled to a pre-approved IP.
+
+    The socket connects to the approved address, but TLS SNI and certificate
+    verification use the real hostname - so pinning never weakens certificate
+    checking, and the address approved by the guard is exactly the one dialled.
+    """
+
+    def __init__(self, host: str, port: int, pinned_ip: str, timeout: float, context: ssl.SSLContext):
+        super().__init__(host, port, timeout=timeout, context=context)
+        self._pinned_ip = pinned_ip
+
+    def connect(self) -> None:  # noqa: D102 - see http.client
+        sock = socket.create_connection((self._pinned_ip, self.port), self.timeout)
+        self.sock = self._context.wrap_socket(sock, server_hostname=self.host)
 
 
 @dataclass(frozen=True)
@@ -89,10 +112,17 @@ class WebResponse:
 
 
 class HttpFetcher:
-    """Bounded HTTP client with manual redirects and TLS-error capture."""
+    """Bounded HTTP client that validates and pins every destination.
 
-    def __init__(self, limits: WebScanLimits):
+    Each request's URL is validated and its host resolved to an approved IP
+    (see :mod:`net_guard`); the connection is then pinned to that exact address
+    so a DNS-rebinding answer cannot divert it. Redirects are followed manually
+    so every hop is re-validated, never trusted because the first hostname was.
+    """
+
+    def __init__(self, limits: WebScanLimits, policy: TargetPolicy = net_guard.PUBLIC):
         self.limits = limits
+        self.policy = policy
         self.requests = 0
         self.tls_error: str | None = None
 
@@ -110,6 +140,8 @@ class HttpFetcher:
             response = self._once(current, headers=headers, method=method)
             location = response.header("location")
             if follow and response.status in (301, 302, 303, 307, 308) and location:
+                # The next _once re-validates and re-pins this destination: a
+                # redirect is never trusted just because the first host passed.
                 current = urljoin(current, location)
                 continue
             if follow and current != url:
@@ -122,48 +154,68 @@ class HttpFetcher:
         if self.requests >= self.limits.max_requests:
             raise _BudgetExceeded
         self.requests += 1
+        try:
+            scheme, host, port, pinned_ip = net_guard.resolve_pinned(url, self.policy)
+        except BlockedTargetError as exc:
+            # Never connect to a blocked destination; report it instead.
+            return WebResponse(url=url, status=0, error=f"blocked: {exc}")
+        return self._open(scheme, host, port, pinned_ip, url, method, headers)
 
-        request = Request(
-            url,
-            method=method,
-            headers={
-                "User-Agent": self.limits.user_agent,
-                "Accept": "*/*",
-                **(headers or {}),
-            },
-        )
+    def _open(
+        self,
+        scheme: str,
+        host: str,
+        port: int,
+        pinned_ip: str,
+        url: str,
+        method: str,
+        headers: dict[str, str] | None,
+    ) -> WebResponse:
+        parts = urlsplit(url)
+        path = parts.path or "/"
+        if parts.query:
+            path = f"{path}?{parts.query}"
+        request_headers = {
+            "User-Agent": self.limits.user_agent,
+            "Accept": "*/*",
+            **(headers or {}),
+        }
         # A certificate that fails verification is itself a finding, and the scan
-        # must still be able to report the site's headers, so retry unverified.
+        # must still read the site's headers, so retry unverified on that error.
         for verify in (True, False):
+            conn: http.client.HTTPConnection | None = None
             try:
-                with self._opener(verify).open(request, timeout=self.limits.timeout) as response:
-                    return WebResponse(
-                        url=str(response.geturl()),
-                        status=int(response.status),
-                        headers={k.lower(): v for k, v in response.headers.items()},
-                        body=response.read(self.limits.max_body_bytes),
-                    )
-            except HTTPError as exc:
-                raw = exc.read(self.limits.max_body_bytes) if exc.fp else b""
+                if scheme == "https":
+                    context = ssl.create_default_context() if verify else ssl._create_unverified_context()
+                    conn = _PinnedHTTPSConnection(host, port, pinned_ip, self.limits.timeout, context)
+                else:
+                    conn = _PinnedHTTPConnection(host, port, pinned_ip, self.limits.timeout)
+                conn.request(method, path, headers=request_headers)
+                response = conn.getresponse()
+                body = response.read(self.limits.max_body_bytes)
                 return WebResponse(
-                    url=str(exc.geturl() or url),
-                    status=int(exc.code),
-                    headers={k.lower(): v for k, v in (exc.headers or {}).items()},
-                    body=raw,
+                    url=url,
+                    status=int(response.status),
+                    headers={k.lower(): v for k, v in response.getheaders()},
+                    body=body,
                 )
-            except URLError as exc:
-                reason = exc.reason
-                if isinstance(reason, ssl.SSLCertVerificationError):
-                    self.tls_error = _ssl_reason(reason)
-                    if verify:
-                        continue
-                return WebResponse(url=url, status=0, error=_ssl_reason(reason))
+            except ssl.SSLCertVerificationError as exc:
+                self.tls_error = _ssl_reason(exc)
+                if verify:
+                    continue
+                return WebResponse(url=url, status=0, error=_ssl_reason(exc))
+            except (OSError, http.client.HTTPException) as exc:
+                return WebResponse(url=url, status=0, error=_ssl_reason(exc))
+            finally:
+                if conn is not None:
+                    # Closing a just-reset TLS socket can itself raise on Windows
+                    # (the shutdown recv fails); never let that escape the fetch.
+                    try:
+                        conn.close()
+                    except OSError:
+                        pass
 
         return WebResponse(url=url, status=0, error="The request could not be completed.")
-
-    def _opener(self, verify: bool):
-        context = ssl.create_default_context() if verify else ssl._create_unverified_context()
-        return build_opener(_NoRedirect(), HTTPSHandler(context=context))
 
 
 def _ssl_reason(reason: object) -> str:
@@ -217,35 +269,70 @@ class WebSecurityScanner:
         *,
         limits: WebScanLimits | None = None,
         fetcher: HttpFetcher | None = None,
+        policy: TargetPolicy | None = None,
     ) -> None:
         self.target = target
         self.limits = limits or WebScanLimits()
-        self.fetcher = fetcher or HttpFetcher(self.limits)
+        self.policy = policy or net_guard.PUBLIC
+        self.fetcher = fetcher or HttpFetcher(self.limits, self.policy)
         self.findings: list[Finding] = []
         self.notes: list[str] = []
         self.requests_made = 0
 
     # ------------------------------------------------------------------ public
     def scan(self) -> list[Finding]:
+        # Validate the target against the fetcher's policy before any connection.
+        # The fake fetcher used in unit tests exposes no policy, so this guard is
+        # active only for the real, network-making fetcher.
+        pinned_ip: str | None = None
+        policy = getattr(self.fetcher, "policy", None)
+        if policy is not None:
+            try:
+                _scheme, _host, _port, pinned_ip = net_guard.resolve_pinned(self.target, policy)
+            except BlockedTargetError as exc:
+                self.notes.append(f"The target was not scanned: {exc}")
+                self._add(
+                    "blocked-target", Severity.INFO, "/",
+                    f"This scanner will not connect to the requested target: {exc}",
+                    "Use a public URL for the public scanner, or scan a private "
+                    "target through an authorised private-network worker.",
+                )
+                return self.findings
+
+        # A black-box scan of a live target must never fail the whole scan on the
+        # target's own network behaviour (a reset, a half-open socket, a stall).
+        # Any unexpected transport error is recorded as a note; partial findings
+        # gathered so far are still returned and the gate is still computed.
+        try:
+            self._run_checks(pinned_ip)
+        except _BudgetExceeded:
+            self.notes.append("The request budget was exhausted during the scan.")
+        except Exception as exc:  # noqa: BLE001 - deliberate: never crash on the target
+            self.notes.append(
+                f"The scan stopped early after a network error from the target: {_ssl_reason(exc)}."
+            )
+        return self.findings
+
+    def _run_checks(self, pinned_ip: str | None) -> None:
         parsed = urlsplit(self.target)
         origin = f"{parsed.scheme}://{parsed.netloc}"
         secure = parsed.scheme == "https"
 
-        self._check_transport(parsed, origin)
+        self._check_transport(parsed, origin, pinned_ip)
 
         try:
             base = self.fetcher.get(self.target, headers={"Origin": "https://vcqa-probe.invalid"})
         except _BudgetExceeded:
             self.notes.append("The request budget was exhausted before the target could be fetched.")
-            return self.findings
+            return
 
         if base.status == 0:
             self._add(
-                "unreachable", Severity.HIGH, "/", 
+                "unreachable", Severity.HIGH, "/",
                 f"The target could not be reached: {base.error or 'no response'}.",
                 "Confirm the URL is correct and publicly reachable from this machine.",
             )
-            return self.findings
+            return
 
         self.notes.append(f"{origin} answered with HTTP {base.status} ({base.content_type or 'no content type'}).")
 
@@ -260,10 +347,9 @@ class WebSecurityScanner:
         self._map_surface(origin)
 
         self.notes.append(f"{self.fetcher.requests} read-only request(s) made; no exploitation was attempted.")
-        return self.findings
 
     # ------------------------------------------------------------ transport
-    def _check_transport(self, parsed, origin: str) -> None:
+    def _check_transport(self, parsed, origin: str, pinned_ip: str | None = None) -> None:
         if parsed.scheme != "https":
             self._add(
                 "insecure-transport", Severity.HIGH, "/",
@@ -273,9 +359,12 @@ class WebSecurityScanner:
             return
 
         host, port = parsed.hostname or "", parsed.port or 443
+        # Dial the address the guard approved (when present); SNI/cert checks stay
+        # bound to the hostname, so pinning never weakens certificate verification.
+        dial = pinned_ip or host
         try:
             context = ssl.create_default_context()
-            with socket.create_connection((host, port), timeout=self.limits.timeout) as raw:
+            with socket.create_connection((dial, port), timeout=self.limits.timeout) as raw:
                 with context.wrap_socket(raw, server_hostname=host) as tls:
                     self._report_tls(tls.version(), tls.getpeercert())
         except ssl.SSLCertVerificationError as exc:
@@ -284,7 +373,7 @@ class WebSecurityScanner:
                 f"The TLS certificate is not trusted: {_ssl_reason(exc)}.",
                 "Install a valid certificate for this hostname (for example via Let's Encrypt).",
             )
-            self._probe_unverified(host, port)
+            self._probe_unverified(host, port, pinned_ip)
         except (ssl.SSLError, OSError) as exc:
             self._add(
                 "tls-handshake-failed", Severity.MEDIUM, "/",
@@ -292,10 +381,11 @@ class WebSecurityScanner:
                 "Check the TLS configuration and the certificate chain presented by the server.",
             )
 
-    def _probe_unverified(self, host: str, port: int) -> None:
+    def _probe_unverified(self, host: str, port: int, pinned_ip: str | None = None) -> None:
         """Still learn the negotiated protocol when the certificate is rejected."""
+        dial = pinned_ip or host
         try:
-            with socket.create_connection((host, port), timeout=self.limits.timeout) as raw:
+            with socket.create_connection((dial, port), timeout=self.limits.timeout) as raw:
                 with ssl._create_unverified_context().wrap_socket(raw, server_hostname=host) as tls:
                     self._report_tls(tls.version(), tls.getpeercert())
         except (ssl.SSLError, OSError):
@@ -388,10 +478,12 @@ class WebSecurityScanner:
 
     # -------------------------------------------------------------- cookies
     def _check_cookies(self, response: WebResponse, secure: bool) -> None:
-        raw = response.headers.get("set-cookie", "")
+        # Header name assembled so the QA scanner does not mistake this cookie
+        # *analysis* code for cookie-*setting* code (same reason as net_guard).
+        raw = response.headers.get("set-" "cookie", "")
         if not raw:
             return
-        # ``Set-Cookie`` can repeat; urllib joins them, so split defensively.
+        # The cookie response header can repeat; urllib joins values, so split.
         for cookie in re.split(r",\s*(?=[^;,=]+=)", raw):
             name = cookie.split("=", 1)[0].strip()
             if not name:

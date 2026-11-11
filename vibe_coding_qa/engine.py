@@ -857,6 +857,7 @@ def run_web_scan(
     progress: "ProgressCallback | None" = None,
     minimum_score: int | None = None,
     limits: Any = None,
+    policy: Any = None,
 ) -> ScanResult:
     """Run the read-only web checks against a deployed website or app URL.
 
@@ -868,7 +869,7 @@ def run_web_scan(
     from .scanners.web import WebSecurityScanner
 
     _emit(progress, "preparation", "running", "Connecting to the target")
-    scanner = WebSecurityScanner(target, limits=limits)
+    scanner = WebSecurityScanner(target, limits=limits, policy=policy)
     _emit(progress, "scanner", "running", "Running web analysis", {"module": "web"})
     findings = scanner.scan()
     _emit(
