@@ -14,11 +14,13 @@ from ..schemas import GenericMessage, ScanCreate, ScanEventOut, ScanListOut, Sca
 from ..security import ValidationError
 from ..services.intel import compare_scans
 from ..services.settings import scan_settings
-from .deps import Services, get_services
+from .deps import Services, get_services, require_admin, require_analyst
 
 router = APIRouter(tags=["scans"])
 
 ServicesDep = Annotated[Services, Depends(get_services)]
+AdminDep = Annotated[dict, Depends(require_admin)]
+AnalystDep = Annotated[dict, Depends(require_analyst)]
 
 _TERMINAL = {"completed", "failed", "cancelled"}
 _POLL_SECONDS = 0.5
@@ -39,7 +41,7 @@ def diff_scans(
 
 
 @router.post("/api/scans", response_model=ScanOut, status_code=202)
-def create_scan(payload: ScanCreate, services: ServicesDep) -> dict:
+def create_scan(payload: ScanCreate, services: ServicesDep, _user: AnalystDep) -> dict:
     """Queue a scan. It runs in the bounded background pool, not in this request."""
     repository = services.repositories.require(payload.repository_id)
     defaults = scan_settings(services.store, services.settings)
@@ -80,7 +82,7 @@ def get_scan(scan_id: int, services: ServicesDep) -> dict:
 
 
 @router.post("/api/scans/{scan_id}/cancel", response_model=ScanOut)
-def cancel_scan(scan_id: int, services: ServicesDep) -> dict:
+def cancel_scan(scan_id: int, services: ServicesDep, _user: AnalystDep) -> dict:
     """Cancel a scan that has not started yet.
 
     A scan already executing inside the sandbox is left to finish: interrupting
@@ -93,7 +95,7 @@ def cancel_scan(scan_id: int, services: ServicesDep) -> dict:
 
 
 @router.delete("/api/scans/{scan_id}", response_model=GenericMessage)
-def delete_scan(scan_id: int, services: ServicesDep) -> dict:
+def delete_scan(scan_id: int, services: ServicesDep, _user: AdminDep) -> dict:
     """Delete one scan from the history, along with its findings and events."""
     if services.store.get_scan(scan_id) is None:
         raise KeyError(f"Scan {scan_id} was not found.")

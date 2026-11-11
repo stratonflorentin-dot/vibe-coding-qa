@@ -225,6 +225,153 @@ MIGRATIONS: list[tuple[int, list[str]]] = [
             "CREATE INDEX idx_audit_id ON audit_log(id DESC)",
         ],
     ),
+    (
+        3,
+        [
+            # Optional Kali Security Worker fleet. A worker is an independently
+            # deployed container the customer runs on their own VPS/LAN; the main
+            # API never executes a tool itself and never mounts the Docker socket.
+            # ``token`` authenticates the API to the worker (outbound only).
+            """
+            CREATE TABLE security_workers (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                base_url TEXT NOT NULL,
+                token TEXT,
+                placement TEXT NOT NULL DEFAULT 'remote',
+                allowed_networks TEXT,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                last_seen_at TEXT,
+                last_status TEXT,
+                last_detail TEXT,
+                worker_version TEXT,
+                tools TEXT
+            )
+            """,
+            # An authorised target. Registration never contacts the target: the
+            # allowlist entry and the ownership check are prerequisites for a scan.
+            """
+            CREATE TABLE security_targets (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                value TEXT NOT NULL,
+                kind TEXT NOT NULL DEFAULT 'url',
+                environment TEXT NOT NULL DEFAULT 'staging',
+                ownership_confirmed INTEGER NOT NULL DEFAULT 0,
+                scope TEXT,
+                profile TEXT NOT NULL DEFAULT 'basic',
+                rate_limit INTEGER,
+                verify_method TEXT,
+                verify_token TEXT,
+                verify_status TEXT NOT NULL DEFAULT 'unverified',
+                verify_detail TEXT,
+                allowed_cidrs TEXT,
+                worker_id INTEGER REFERENCES security_workers(id) ON DELETE SET NULL,
+                created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                notes TEXT,
+                created_at TEXT NOT NULL,
+                verified_at TEXT
+            )
+            """,
+            "CREATE UNIQUE INDEX idx_security_targets_value ON security_targets(value)",
+            """
+            CREATE TABLE security_jobs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                target_id INTEGER NOT NULL REFERENCES security_targets(id) ON DELETE CASCADE,
+                worker_id INTEGER REFERENCES security_workers(id) ON DELETE SET NULL,
+                profile TEXT NOT NULL,
+                tools TEXT,
+                status TEXT NOT NULL,
+                intrusive INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                started_at TEXT,
+                completed_at TEXT,
+                cancel_requested INTEGER NOT NULL DEFAULT 0,
+                findings_count INTEGER NOT NULL DEFAULT 0,
+                message TEXT,
+                error TEXT,
+                remote_job_id TEXT,
+                actor TEXT
+            )
+            """,
+            "CREATE INDEX idx_security_jobs_target ON security_jobs(target_id, id DESC)",
+            "CREATE INDEX idx_security_jobs_status ON security_jobs(status)",
+            # Normalised findings. ``dedupe_key`` collapses the same vulnerability
+            # reported by several tools against the same endpoint into one row;
+            # ``tools`` lists every tool that saw it, and each tool's raw output is
+            # kept as a separately access-controlled evidence artifact.
+            """
+            CREATE TABLE security_findings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                job_id INTEGER NOT NULL REFERENCES security_jobs(id) ON DELETE CASCADE,
+                target_id INTEGER NOT NULL REFERENCES security_targets(id) ON DELETE CASCADE,
+                fingerprint TEXT NOT NULL,
+                dedupe_key TEXT NOT NULL,
+                tool TEXT NOT NULL,
+                tools TEXT,
+                tool_version TEXT,
+                target TEXT NOT NULL,
+                endpoint TEXT,
+                title TEXT NOT NULL,
+                category TEXT,
+                description TEXT,
+                severity TEXT NOT NULL,
+                confidence TEXT,
+                evidence TEXT,
+                remediation TEXT,
+                references_json TEXT,
+                detected_at TEXT NOT NULL,
+                verification_status TEXT NOT NULL DEFAULT 'unverified',
+                verified_at TEXT,
+                status TEXT NOT NULL DEFAULT 'open',
+                first_seen_job_id INTEGER,
+                occurrences INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL
+            )
+            """,
+            "CREATE INDEX idx_security_findings_job ON security_findings(job_id)",
+            "CREATE INDEX idx_security_findings_target ON security_findings(target_id, severity)",
+            "CREATE UNIQUE INDEX idx_security_findings_dedupe ON security_findings(target_id, dedupe_key)",
+            # Raw tool output, kept verbatim but only ever served to an authorised
+            # user. Never interpreted as instructions.
+            """
+            CREATE TABLE security_evidence (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                job_id INTEGER NOT NULL REFERENCES security_jobs(id) ON DELETE CASCADE,
+                finding_id INTEGER REFERENCES security_findings(id) ON DELETE SET NULL,
+                tool TEXT NOT NULL,
+                kind TEXT NOT NULL DEFAULT 'raw',
+                content TEXT NOT NULL,
+                content_sha256 TEXT NOT NULL,
+                byte_size INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL
+            )
+            """,
+            "CREATE INDEX idx_security_evidence_job ON security_evidence(job_id)",
+        ],
+    ),
+    (
+        4,
+        [
+            "ALTER TABLE security_findings ADD COLUMN verification_job_id INTEGER REFERENCES security_jobs(id) ON DELETE SET NULL",
+            "ALTER TABLE security_findings ADD COLUMN verification_checked_at TEXT",
+            """
+            CREATE TABLE security_finding_occurrences (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                finding_id INTEGER NOT NULL REFERENCES security_findings(id) ON DELETE CASCADE,
+                job_id INTEGER NOT NULL REFERENCES security_jobs(id) ON DELETE CASCADE,
+                tool TEXT NOT NULL,
+                tool_version TEXT,
+                evidence TEXT,
+                detected_at TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                UNIQUE(finding_id, job_id, tool)
+            )
+            """,
+            "CREATE INDEX idx_security_occurrences_job ON security_finding_occurrences(job_id, finding_id)",
+        ],
+    ),
 ]
 
 

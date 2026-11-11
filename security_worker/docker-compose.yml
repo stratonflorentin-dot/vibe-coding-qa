@@ -1,0 +1,81 @@
+services:
+  security-worker:
+    build:
+      context: ..
+      dockerfile: security_worker/Dockerfile
+    image: vcqa-security-worker:0.1.0
+    restart: unless-stopped
+    profiles: ["security-worker"]
+    environment:
+      VCQA_WORKER_TOKEN: ${VCQA_WORKER_TOKEN:?Set a random worker token of at least 32 characters}
+      VCQA_WORKER_ALLOWED_CIDRS: ${VCQA_WORKER_ALLOWED_CIDRS:-}
+      VCQA_WORKER_CONCURRENCY: ${VCQA_WORKER_CONCURRENCY:-1}
+      VCQA_WORKER_MAX_TIMEOUT: ${VCQA_WORKER_MAX_TIMEOUT:-900}
+      VCQA_WORKER_MAX_OUTPUT_BYTES: ${VCQA_WORKER_MAX_OUTPUT_BYTES:-8000000}
+      VCQA_NUCLEI_TEMPLATES: /opt/vcqa/nuclei-templates
+      ZAP_BASE_URL: http://zap:8080
+      ZAP_API_KEY: ${VCQA_ZAP_API_KEY:-}
+    expose:
+      - "8765"
+    ports:
+      - "127.0.0.1:${VCQA_WORKER_HOST_PORT:-8765}:8765"
+    read_only: true
+    tmpfs:
+      - /tmp:size=128m,noexec,nosuid,nodev
+      - /work:size=256m,noexec,nosuid,nodev
+      - /home/vcqa:size=32m,noexec,nosuid,nodev
+    volumes:
+      - ./nuclei-templates:/opt/vcqa/nuclei-templates:ro
+    cpus: 2.0
+    mem_limit: 2g
+    pids_limit: 128
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks:
+      - vcqa-security
+    depends_on:
+      zap:
+        condition: service_started
+        required: false
+
+  zap:
+    # Official ZAP image, pinned to its verified OCI manifest-list digest.
+    image: ghcr.io/zaproxy/zaproxy@sha256:9624669db72f54d86c4b46a7064518bd9bf79d8c61a4c31befa9923489f328af
+    profiles: ["zap"]
+    restart: unless-stopped
+    command:
+      - zap.sh
+      - -daemon
+      - -host
+      - 0.0.0.0
+      - -port
+      - "8080"
+      - -config
+      - api.key=${VCQA_ZAP_API_KEY:?Set a ZAP API key when enabling the zap profile}
+      - -config
+      - api.addrs.addr.name=security-worker
+      - -config
+      - api.addrs.addr.regex=false
+    expose:
+      - "8080"
+    read_only: true
+    tmpfs:
+      - /tmp:size=256m,nosuid,nodev
+      - /home/zap:size=256m,nosuid,nodev
+      - /zap/wrk:size=256m,nosuid,nodev
+    cpus: 2.0
+    mem_limit: 2g
+    pids_limit: 128
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks:
+      - vcqa-security
+
+networks:
+  vcqa-security:
+    external: true
+    name: ${VCQA_SECURITY_NETWORK:-vcqa-security}

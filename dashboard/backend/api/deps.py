@@ -19,6 +19,7 @@ from ..persistence.store import Store
 from ..services.accounts_service import AccountService
 from ..services.dashboard import DashboardService
 from ..services.repositories import RepositoryService
+from ..services.security_lab import SecurityLabService
 from ..services.scans import ScanRunner
 
 
@@ -32,6 +33,7 @@ class Services:
     dashboard: DashboardService
     ai: AIService
     accounts: AccountService
+    security_lab: SecurityLabService
 
 
 def build_services(settings: Settings | None = None) -> Services:
@@ -48,6 +50,7 @@ def build_services(settings: Settings | None = None) -> Services:
         dashboard=DashboardService(store, resolved),
         ai=AIService(store, resolved),
         accounts=AccountService(store, resolved),
+        security_lab=SecurityLabService(store, max_concurrency=resolved.max_concurrent_scans),
     )
 
 
@@ -109,6 +112,14 @@ def require_role(minimum: "str | int | Role"):
         return user
 
     return dependency
+
+
+#: Semantic role gates for data routes. Read endpoints are already covered by
+#: the auth middleware (any authenticated user = viewer); these guard mutations.
+#: In open / legacy-credential mode they resolve to the single operator.
+require_viewer = require_role(Role.VIEWER)
+require_analyst = require_role(Role.SECURITY_ANALYST)
+require_admin = require_role(Role.ADMINISTRATOR)
 
 
 def require_account_admin(request: Request) -> dict:

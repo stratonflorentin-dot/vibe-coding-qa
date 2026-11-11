@@ -221,6 +221,32 @@ class WebScannerTests(TestCase):
         self.assertFalse(any("lockfile" in gap for gap in gaps))
 
 
+class ComplianceScannerTests(TestCase):
+    def _scan_checkbox(self, contents: str) -> set[str]:
+        from vibe_coding_qa.scanners.compliance import ComplianceScanner
+
+        repo = Path(tempfile.mkdtemp(prefix="vcqa-compliance-"))
+        try:
+            (repo / "form.tsx").write_text(contents, encoding="utf-8")
+            return {finding.rule for finding in ComplianceScanner(repo).scan()}
+        finally:
+            shutil.rmtree(repo, ignore_errors=True)
+
+    def test_controlled_authorization_checkbox_is_not_treated_as_preticked_consent(self):
+        rules = self._scan_checkbox(
+            "<" + 'input type="checkbox" checked={authorizationConfirmed} />'
+            "<label>I confirm that I am authorized to test this target.</label>"
+        )
+        self.assertNotIn("compliance:pre-ticked-consent-checkbox", rules)
+
+    def test_literal_checked_consent_checkbox_is_reported(self):
+        rules = self._scan_checkbox(
+            '<label>Consent to process personal data</label>'
+            "<" + 'input type="checkbox" checked />'
+        )
+        self.assertIn("compliance:pre-ticked-consent-checkbox", rules)
+
+
 if __name__ == "__main__":
     import unittest
     unittest.main()

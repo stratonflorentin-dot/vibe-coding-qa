@@ -461,3 +461,64 @@ class HealthOut(BaseModel):
 
 class GenericMessage(BaseModel):
     detail: str
+
+
+# ---------------------------------------------------------- security workers
+class SecurityWorkerCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    base_url: str = Field(min_length=1, max_length=500)
+    token: str = Field(min_length=32, max_length=512)
+    placement: Literal["same_vps", "remote_vps", "private_network"] = "same_vps"
+    allowed_networks: list[str] = Field(default_factory=list, max_length=100)
+
+
+class SecurityWorkerUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    base_url: str | None = Field(default=None, min_length=1, max_length=500)
+    token: str | None = Field(default=None, min_length=32, max_length=512)
+    placement: Literal["same_vps", "remote_vps", "private_network"] | None = None
+    allowed_networks: list[str] | None = Field(default=None, max_length=100)
+    enabled: bool | None = None
+
+
+class SecurityTargetCreate(BaseModel):
+    value: str = Field(min_length=1, max_length=2000)
+    environment: Literal["development", "staging", "production"] = "staging"
+    ownership_confirmed: bool = False
+    scope: str | None = Field(default=None, max_length=2000)
+    profile: Literal["basic", "network", "web", "vulnerability", "comprehensive"] = "basic"
+    rate_limit: int | None = Field(default=None, ge=1, le=1000)
+    worker_id: int | None = Field(default=None, ge=1)
+    allowed_cidrs: list[str] = Field(default_factory=list, max_length=100)
+    notes: str | None = Field(default=None, max_length=1000)
+    verify_method: Literal["dns", "http"] | None = None
+
+
+class SecurityTargetCreateOut(BaseModel):
+    target: dict[str, Any]
+    verification_token: str | None = None
+
+
+class SecurityScanCreate(BaseModel):
+    target_id: int = Field(ge=1)
+    profile: Literal["basic", "network", "web", "vulnerability", "comprehensive"]
+    rate_limit: int | None = Field(default=None, ge=1, le=1000)
+    explicit_authorization: bool = False
+
+
+class SecurityFindingStatusUpdate(BaseModel):
+    status: Literal["open", "reviewed", "resolved", "dismissed"]
+
+
+class SecurityFindingsOut(BaseModel):
+    items: list[dict[str, Any]]
+    total: int
+    limit: int
+    offset: int
+
+
+class SecurityJobsOut(BaseModel):
+    items: list[dict[str, Any]]
+    total: int
+    limit: int
+    offset: int

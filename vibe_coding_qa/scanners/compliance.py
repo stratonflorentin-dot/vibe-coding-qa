@@ -7,6 +7,30 @@ from . import BaseScanner, load_ignore_patterns, is_ignored
 from vibe_coding_qa import Finding, Severity
 
 
+def _pre_ticked_consent_location(text: str) -> int | None:
+    """Return the offset of a literal checked consent box, not controlled state."""
+    consent_terms = re.compile(r"\b(consent|privacy|personal data|data protection|marketing)\b", re.IGNORECASE)
+    for match in re.finditer(r"<input\b[^>]*>", text, re.IGNORECASE):
+        tag = match.group(0)
+        if not re.search(r"""(?<![\w-])type\s*=\s*["']?checkbox["']?(?![\w-])""", tag, re.IGNORECASE):
+            continue
+        checked = re.search(
+            r"(?<![\w-])(?:defaultChecked|checked)(?![\w-])"
+            r"(?:\s*=\s*(\{[^}]*\}|\"[^\"]*\"|'[^']*'|[^\s/>]+))?",
+            tag,
+            re.IGNORECASE,
+        )
+        if not checked:
+            continue
+        value = checked.group(1)
+        if value is not None and value.strip("{}\"' ").lower() not in {"true", "checked"}:
+            continue
+        context = text[max(0, match.start() - 500):min(len(text), match.end() + 700)]
+        if consent_terms.search(context):
+            return match.start()
+    return None
+
+
 class ComplianceScanner(BaseScanner):
     module = "compliance"
 
@@ -27,14 +51,17 @@ class ComplianceScanner(BaseScanner):
             return
         consent_found = False
         explicit_opt_in_found = False
-        pre_ticked_found = False
+        pre_ticked_offset = None
         for path in html_files:
             text = path.read_text(encoding="utf-8", errors="ignore").lower()
             if "consent" in text or "privacy" in text or "data protection" in text:
                 consent_found = True
-            if re.search(r"checkbox[^\n]{0,200}?(checked|defaultchecked|checked=\"true\"|checked={true})", text, re.IGNORECASE):
-                pre_ticked_found = True
-            if re.search(r"checkbox[^\n]{0,200}?\b(required|must)\b", text, re.IGNORECASE) and not pre_ticked_found:
+            if pre_ticked_offset is None:
+                pre_ticked_offset = _pre_ticked_consent_location(text)
+                if pre_ticked_offset is not None:
+                    pre_ticked_path = path
+                    pre_ticked_text = text
+            if re.search(r"checkbox[^\n]{0,200}?\b(required|must)\b", text, re.IGNORECASE) and pre_ticked_offset is None:
                 explicit_opt_in_found = True
         if not consent_found:
             self.add(
@@ -46,17 +73,17 @@ class ComplianceScanner(BaseScanner):
                 suggestion="Add a clear disclosure naming the data controller and purpose before collecting personal data.",
                 confidence="low",
             )
-        if pre_ticked_found:
+        if pre_ticked_offset is not None:
             self.add(
                 rule="pre-ticked-consent-checkbox",
                 severity=Severity.CRITICAL,
-                file=html_files[0],
-                line=1,
+                file=pre_ticked_path,
+                line=pre_ticked_text.count("\n", 0, pre_ticked_offset) + 1,
                 message="Pre-ticked consent checkbox detected; this violates Tanzania PDPA 2022.",
                 suggestion="Require an explicit affirmative action (unticked checkbox) for consent.",
                 confidence="medium",
             )
-        if consent_found and not explicit_opt_in_found and not pre_ticked_found:
+        if consent_found and not explicit_opt_in_found and pre_ticked_offset is None:
             self.add(
                 rule="explicit-opt-in-unverified",
                 severity=Severity.MEDIUM,

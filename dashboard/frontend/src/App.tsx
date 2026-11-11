@@ -16,6 +16,7 @@ import { RepositoriesPage } from "@/pages/repositories";
 import { RepositoryDetailPage } from "@/pages/repository-detail";
 import { ScanComparePage, ScanDetailPage } from "@/pages/scan-detail";
 import { ScansPage } from "@/pages/scans";
+import { SecurityLabPage } from "@/pages/security-lab";
 import { SettingsPage } from "@/pages/settings";
 
 export function App() {
@@ -31,6 +32,7 @@ export function App() {
             <Route path="/scans/new" element={<NewScanPage />} />
             <Route path="/scans/compare" element={<ScanComparePage />} />
             <Route path="/scans/:scanId" element={<ScanDetailPage />} />
+            <Route path="/security" element={<SecurityLabPage />} />
             <Route path="/findings" element={<FindingsPage />} />
             <Route path="/findings/:findingId" element={<FindingDetailPage />} />
             <Route path="/architecture" element={<ArchitecturePage />} />

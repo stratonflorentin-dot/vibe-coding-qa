@@ -720,3 +720,459 @@ class Store:
     def list_audit(self, limit: int = 100) -> list[dict]:
         rows = self.db.query("SELECT * FROM audit_log ORDER BY id DESC LIMIT ?", (int(limit),))
         return [dict(row) for row in rows]
+
+    # ------------------------------------------------------- security workers
+    def create_security_worker(
+        self,
+        *,
+        name: str,
+        base_url: str,
+        token: str | None,
+        placement: str = "remote",
+        allowed_networks: str | None = None,
+    ) -> dict:
+        now = utcnow()
+        cursor = self.db.execute(
+            """
+            INSERT INTO security_workers
+                (name, base_url, token, placement, allowed_networks, enabled, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, 1, ?, ?)
+            """,
+            (name, base_url, token, placement, allowed_networks, now, now),
+        )
+        return self.get_security_worker(cursor.lastrowid)
+
+    def get_security_worker(self, worker_id: int) -> dict | None:
+        row = self.db.query_one("SELECT * FROM security_workers WHERE id = ?", (worker_id,))
+        return self._security_worker_row(row)
+
+    def get_security_worker_by_name(self, name: str) -> dict | None:
+        row = self.db.query_one("SELECT * FROM security_workers WHERE name = ?", (name,))
+        return self._security_worker_row(row)
+
+    def list_security_workers(self) -> list[dict]:
+        rows = self.db.query("SELECT * FROM security_workers ORDER BY id")
+        return [self._security_worker_row(row) for row in rows]
+
+    def update_security_worker(self, worker_id: int, **fields) -> dict | None:
+        allowed = {
+            "name", "base_url", "token", "placement", "allowed_networks", "enabled",
+            "last_seen_at", "last_status", "last_detail", "worker_version", "tools",
+        }
+        columns: list[str] = []
+        params: list[Any] = []
+        for key, value in fields.items():
+            if key not in allowed:
+                continue
+            columns.append(f"{key} = ?")
+            if key in ("enabled",):
+                params.append(1 if value else 0)
+            elif key == "tools":
+                params.append(_dumps(value))
+            else:
+                params.append(value)
+        if not columns:
+            return self.get_security_worker(worker_id)
+        columns.append("updated_at = ?")
+        params.append(utcnow())
+        params.append(worker_id)
+        self.db.execute(f"UPDATE security_workers SET {', '.join(columns)} WHERE id = ?", tuple(params))
+        return self.get_security_worker(worker_id)
+
+    def delete_security_worker(self, worker_id: int) -> bool:
+        cursor = self.db.execute("DELETE FROM security_workers WHERE id = ?", (worker_id,))
+        return cursor.rowcount > 0
+
+    @staticmethod
+    def _security_worker_row(row) -> dict | None:
+        if row is None:
+            return None
+        data = dict(row)
+        data["tools"] = _loads(data.get("tools"), [])
+        data["enabled"] = bool(data.get("enabled"))
+        return data
+
+    # ------------------------------------------------------- security targets
+    def create_security_target(
+        self,
+        *,
+        value: str,
+        kind: str = "url",
+        environment: str = "staging",
+        ownership_confirmed: bool = False,
+        scope: str | None = None,
+        profile: str = "basic",
+        rate_limit: int | None = None,
+        verify_method: str | None = None,
+        verify_token: str | None = None,
+        allowed_cidrs: str | None = None,
+        worker_id: int | None = None,
+        created_by: int | None = None,
+        notes: str | None = None,
+    ) -> dict:
+        cursor = self.db.execute(
+            """
+            INSERT INTO security_targets
+                (value, kind, environment, ownership_confirmed, scope, profile, rate_limit,
+                 verify_method, verify_token, verify_status, allowed_cidrs, worker_id, created_by,
+                 notes, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'unverified', ?, ?, ?, ?, ?)
+            """,
+            (
+                value, kind, environment, 1 if ownership_confirmed else 0, scope, profile, rate_limit,
+                verify_method, verify_token, allowed_cidrs, worker_id, created_by, notes, utcnow(),
+            ),
+        )
+        return self.get_security_target(cursor.lastrowid)
+
+    def get_security_target(self, target_id: int) -> dict | None:
+        row = self.db.query_one("SELECT * FROM security_targets WHERE id = ?", (target_id,))
+        return self._security_target_row(row)
+
+    def get_security_target_by_value(self, value: str) -> dict | None:
+        row = self.db.query_one("SELECT * FROM security_targets WHERE value = ?", (value,))
+        return self._security_target_row(row)
+
+    def list_security_targets(self) -> list[dict]:
+        rows = self.db.query("SELECT * FROM security_targets ORDER BY id DESC")
+        return [self._security_target_row(row) for row in rows]
+
+    def update_security_target(self, target_id: int, **fields) -> dict | None:
+        allowed = {
+            "value", "kind", "environment", "ownership_confirmed", "scope", "profile", "rate_limit",
+            "verify_method", "verify_token", "verify_status", "verify_detail", "allowed_cidrs",
+            "worker_id", "notes", "verified_at",
+        }
+        columns: list[str] = []
+        params: list[Any] = []
+        for key, value in fields.items():
+            if key not in allowed:
+                continue
+            columns.append(f"{key} = ?")
+            params.append(1 if (key == "ownership_confirmed" and value) else (0 if key == "ownership_confirmed" else value))
+        if not columns:
+            return self.get_security_target(target_id)
+        params.append(target_id)
+        self.db.execute(f"UPDATE security_targets SET {', '.join(columns)} WHERE id = ?", tuple(params))
+        return self.get_security_target(target_id)
+
+    def delete_security_target(self, target_id: int) -> bool:
+        cursor = self.db.execute("DELETE FROM security_targets WHERE id = ?", (target_id,))
+        return cursor.rowcount > 0
+
+    @staticmethod
+    def _security_target_row(row) -> dict | None:
+        if row is None:
+            return None
+        data = dict(row)
+        data["ownership_confirmed"] = bool(data.get("ownership_confirmed"))
+        return data
+
+    # ---------------------------------------------------------- security jobs
+    def create_security_job(
+        self,
+        *,
+        target_id: int,
+        worker_id: int | None,
+        profile: str,
+        tools: list[str],
+        intrusive: bool = False,
+        actor: str | None = None,
+        status: str = "queued",
+        message: str | None = None,
+    ) -> dict:
+        cursor = self.db.execute(
+            """
+            INSERT INTO security_jobs
+                (target_id, worker_id, profile, tools, status, intrusive, created_at, message, actor)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                target_id, worker_id, profile, _dumps(tools), status,
+                1 if intrusive else 0, utcnow(), message, actor,
+            ),
+        )
+        return self.get_security_job(cursor.lastrowid)
+
+    def get_security_job(self, job_id: int) -> dict | None:
+        row = self.db.query_one("SELECT * FROM security_jobs WHERE id = ?", (job_id,))
+        return self._security_job_row(row)
+
+    def list_security_jobs(self, *, status: str | None = None, target_id: int | None = None, limit: int = 100, offset: int = 0) -> tuple[list[dict], int]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        if status:
+            clauses.append("status = ?")
+            params.append(status)
+        if target_id is not None:
+            clauses.append("target_id = ?")
+            params.append(target_id)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        total_row = self.db.query_one(f"SELECT COUNT(*) AS n FROM security_jobs {where}", tuple(params))
+        rows = self.db.query(
+            f"SELECT * FROM security_jobs {where} ORDER BY id DESC LIMIT ? OFFSET ?",
+            tuple(params) + (int(limit), int(offset)),
+        )
+        return [self._security_job_row(row) for row in rows], int(total_row["n"]) if total_row else 0
+
+    def update_security_job(self, job_id: int, **fields) -> dict | None:
+        allowed = {
+            "status", "started_at", "completed_at", "cancel_requested", "findings_count",
+            "message", "error", "remote_job_id", "worker_id", "tools", "intrusive",
+        }
+        columns: list[str] = []
+        params: list[Any] = []
+        for key, value in fields.items():
+            if key not in allowed:
+                continue
+            columns.append(f"{key} = ?")
+            if key in ("cancel_requested", "intrusive"):
+                params.append(1 if value else 0)
+            elif key == "tools":
+                params.append(_dumps(value))
+            else:
+                params.append(value)
+        if not columns:
+            return self.get_security_job(job_id)
+        params.append(job_id)
+        self.db.execute(f"UPDATE security_jobs SET {', '.join(columns)} WHERE id = ?", tuple(params))
+        return self.get_security_job(job_id)
+
+    def mark_interrupted_security_jobs(self) -> list[int]:
+        """Mark queued/running security jobs failed after an unclean restart."""
+        rows = self.db.query("SELECT id FROM security_jobs WHERE status IN ('queued', 'running')")
+        ids = [int(row["id"]) for row in rows]
+        for job_id in ids:
+            self.db.execute(
+                "UPDATE security_jobs SET status = 'failed', completed_at = ?, error = ? WHERE id = ?",
+                (utcnow(), "Interrupted by a dashboard restart.", job_id),
+            )
+        return ids
+
+    @staticmethod
+    def _security_job_row(row) -> dict | None:
+        if row is None:
+            return None
+        data = dict(row)
+        data["tools"] = _loads(data.get("tools"), [])
+        data["intrusive"] = bool(data.get("intrusive"))
+        data["cancel_requested"] = bool(data.get("cancel_requested"))
+        return data
+
+    # ------------------------------------------------------ security findings
+    def upsert_security_finding(
+        self,
+        *,
+        job_id: int,
+        target_id: int,
+        fingerprint: str,
+        dedupe_key: str,
+        tool: str,
+        tool_version: str | None,
+        target: str,
+        endpoint: str | None,
+        title: str,
+        category: str | None,
+        description: str | None,
+        severity: str,
+        confidence: str | None,
+        evidence: str | None,
+        remediation: str | None,
+        references: list[str] | None,
+        detected_at: str,
+    ) -> tuple[dict, bool]:
+        """Insert a finding, or fold a duplicate into the existing row.
+
+        Uniqueness is ``(target_id, dedupe_key)`` so the same vulnerability seen
+        by several tools becomes one row whose ``tools`` list records each source;
+        ``occurrences`` counts repeat sightings. Returns ``(row, created)``.
+        """
+        existing = self.db.query_one(
+            "SELECT * FROM security_findings WHERE target_id = ? AND dedupe_key = ?",
+            (target_id, dedupe_key),
+        )
+        if existing is not None:
+            tools = _loads(existing["tools"], []) or []
+            if tool not in tools:
+                tools.append(tool)
+            self.db.execute(
+                """
+                UPDATE security_findings
+                SET occurrences = occurrences + 1, tools = ?, detected_at = ?,
+                    tool_version = COALESCE(?, tool_version),
+                    evidence = COALESCE(?, evidence)
+                WHERE id = ?
+                """,
+                (_dumps(tools), detected_at, tool_version, evidence, existing["id"]),
+            )
+            self.db.execute(
+                """
+                INSERT OR IGNORE INTO security_finding_occurrences
+                    (finding_id, job_id, tool, tool_version, evidence, detected_at, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (existing["id"], job_id, tool, tool_version, evidence, detected_at, utcnow()),
+            )
+            return self.get_security_finding(existing["id"]), False
+
+        cursor = self.db.execute(
+            """
+            INSERT INTO security_findings
+                (job_id, target_id, fingerprint, dedupe_key, tool, tools, tool_version, target,
+                 endpoint, title, category, description, severity, confidence, evidence,
+                 remediation, references_json, detected_at, first_seen_job_id, occurrences, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+            """,
+            (
+                job_id, target_id, fingerprint, dedupe_key, tool, _dumps([tool]), tool_version, target,
+                endpoint, title, category, description, severity, confidence, evidence,
+                remediation, _dumps(references or []), detected_at, job_id, utcnow(),
+            ),
+        )
+        self.db.execute(
+            """
+            INSERT OR IGNORE INTO security_finding_occurrences
+                (finding_id, job_id, tool, tool_version, evidence, detected_at, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (cursor.lastrowid, job_id, tool, tool_version, evidence, detected_at, utcnow()),
+        )
+        return self.get_security_finding(cursor.lastrowid), True
+
+    def get_security_finding(self, finding_id: int) -> dict | None:
+        row = self.db.query_one("SELECT * FROM security_findings WHERE id = ?", (finding_id,))
+        return self._security_finding_row(row)
+
+    def list_security_findings(
+        self,
+        *,
+        target_id: int | None = None,
+        job_id: int | None = None,
+        severity: str | None = None,
+        status: str | None = None,
+        verification_job_id: int | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> tuple[list[dict], int]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        if target_id is not None:
+            clauses.append("target_id = ?")
+            params.append(target_id)
+        if severity:
+            clauses.append("severity = ?")
+            params.append(severity)
+        if status:
+            clauses.append("status = ?")
+            params.append(status)
+        if verification_job_id is not None:
+            clauses.append("verification_job_id = ?")
+            params.append(verification_job_id)
+        elif job_id is not None:
+            clauses.append(
+                "(job_id = ? OR EXISTS (SELECT 1 FROM security_finding_occurrences o "
+                "WHERE o.finding_id = security_findings.id AND o.job_id = ?))"
+            )
+            params.extend((job_id, job_id))
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        total_row = self.db.query_one(f"SELECT COUNT(*) AS n FROM security_findings {where}", tuple(params))
+        rows = self.db.query(
+            f"""
+            SELECT * FROM security_findings {where}
+            ORDER BY CASE severity
+                WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2
+                WHEN 'low' THEN 3 ELSE 4 END, id DESC
+            LIMIT ? OFFSET ?
+            """,
+            tuple(params) + (int(limit), int(offset)),
+        )
+        return [self._security_finding_row(row) for row in rows], int(total_row["n"]) if total_row else 0
+
+    def set_security_finding_status(self, finding_id: int, status: str) -> dict | None:
+        self.db.execute("UPDATE security_findings SET status = ? WHERE id = ?", (status, finding_id))
+        return self.get_security_finding(finding_id)
+
+    def set_security_finding_verification(
+        self,
+        finding_id: int,
+        verification_status: str,
+        *,
+        verification_job_id: int | None = None,
+    ) -> dict | None:
+        """Record deterministic verification evidence and its source job."""
+        verified_at = utcnow() if verification_status == "verified" else None
+        self.db.execute(
+            """
+            UPDATE security_findings
+            SET verification_status = ?, verified_at = ?, verification_checked_at = ?,
+                verification_job_id = COALESCE(?, verification_job_id)
+            WHERE id = ?
+            """,
+            (verification_status, verified_at, utcnow(), verification_job_id, finding_id),
+        )
+        return self.get_security_finding(finding_id)
+
+    def security_severity_counts(self, target_id: int | None = None) -> dict[str, int]:
+        if target_id is None:
+            rows = self.db.query("SELECT severity, COUNT(*) AS n FROM security_findings GROUP BY severity")
+        else:
+            rows = self.db.query(
+                "SELECT severity, COUNT(*) AS n FROM security_findings WHERE target_id = ? GROUP BY severity",
+                (target_id,),
+            )
+        counts = {key: 0 for key in ("critical", "high", "medium", "low", "info")}
+        for row in rows:
+            counts[str(row["severity"]).lower()] = int(row["n"])
+        return counts
+
+    @staticmethod
+    def _security_finding_row(row) -> dict | None:
+        if row is None:
+            return None
+        data = dict(row)
+        data["tools"] = _loads(data.get("tools"), [])
+        data["references"] = _loads(data.pop("references_json", None), [])
+        return data
+
+    # ------------------------------------------------------ security evidence
+    def add_security_evidence(
+        self,
+        *,
+        job_id: int,
+        finding_id: int | None,
+        tool: str,
+        content: str,
+        kind: str = "raw",
+    ) -> dict:
+        import hashlib
+
+        digest = hashlib.sha256(content.encode("utf-8", "replace")).hexdigest()
+        cursor = self.db.execute(
+            """
+            INSERT INTO security_evidence (job_id, finding_id, tool, kind, content, content_sha256, byte_size, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (job_id, finding_id, tool, kind, content, digest, len(content.encode("utf-8", "replace")), utcnow()),
+        )
+        row = self.db.query_one("SELECT * FROM security_evidence WHERE id = ?", (cursor.lastrowid,))
+        return dict(row)
+
+    def list_security_evidence(self, *, job_id: int | None = None, finding_id: int | None = None, limit: int = 100) -> list[dict]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        if job_id is not None:
+            clauses.append("job_id = ?")
+            params.append(job_id)
+        if finding_id is not None:
+            clauses.append("finding_id = ?")
+            params.append(finding_id)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        rows = self.db.query(
+            f"SELECT * FROM security_evidence {where} ORDER BY id DESC LIMIT ?",
+            tuple(params) + (int(limit),),
+        )
+        return [dict(row) for row in rows]
+
+    def get_security_evidence(self, evidence_id: int) -> dict | None:
+        row = self.db.query_one("SELECT * FROM security_evidence WHERE id = ?", (evidence_id,))
+        return dict(row) if row else None

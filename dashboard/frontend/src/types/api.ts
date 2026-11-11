@@ -15,6 +15,129 @@ export interface HealthOut {
   scans: number;
 }
 
+export interface SecurityProfile {
+  key: string;
+  name: string;
+  description: string;
+  tools: string[];
+  default_rate: number;
+  max_rate: number;
+  requires_explicit_authorization: boolean;
+  activities: Array<{ tool: string; activity: string; intrusive: boolean }>;
+}
+
+export interface SecuritySeverityCounts {
+  critical: number;
+  high: number;
+  medium: number;
+  low: number;
+  info: number;
+}
+
+export interface SecurityTool {
+  key: string;
+  name: string;
+  installed: boolean;
+  status: "available" | "unavailable" | string;
+  version: string | null;
+  detail?: string | null;
+  activity?: string;
+  license?: string;
+}
+
+export interface SecurityWorker {
+  id: number;
+  name: string;
+  base_url: string;
+  placement: "same_vps" | "remote_vps" | "private_network";
+  allowed_networks: string | null;
+  enabled: boolean;
+  last_seen_at: string | null;
+  last_status: string | null;
+  worker_version: string | null;
+  tools: SecurityTool[];
+  reachable?: boolean;
+  status?: string;
+  detail?: string;
+  profiles?: SecurityProfile[];
+}
+
+export interface SecurityTarget {
+  id: number;
+  value: string;
+  kind: "url" | "ip";
+  environment: "development" | "staging" | "production";
+  ownership_confirmed: boolean;
+  scope: string | null;
+  profile: string;
+  rate_limit: number | null;
+  verify_method: string | null;
+  verify_status: string;
+  verify_detail: string | null;
+  allowed_cidrs: string | null;
+  worker_id: number | null;
+  notes: string | null;
+  created_at: string;
+  verified_at: string | null;
+}
+
+export interface SecurityJob {
+  id: number;
+  target_id: number;
+  worker_id: number | null;
+  profile: string;
+  tools: unknown;
+  status: string;
+  intrusive: boolean;
+  created_at: string;
+  started_at: string | null;
+  completed_at: string | null;
+  cancel_requested: boolean;
+  findings_count: number;
+  message: string | null;
+  error: string | null;
+  remote_job_id: string | null;
+}
+
+export interface SecurityFinding {
+  id: number;
+  job_id: number;
+  target_id: number;
+  fingerprint: string;
+  dedupe_key: string;
+  tool: string;
+  tools: string[];
+  tool_version: string | null;
+  target: string;
+  endpoint: string | null;
+  title: string;
+  category: string | null;
+  description: string | null;
+  severity: Severity;
+  confidence: string | null;
+  evidence: string | null;
+  remediation: string | null;
+  references: string[];
+  detected_at: string;
+  verification_status: string;
+  verification_checked_at: string | null;
+  verified_at: string | null;
+  status: FindingStatus;
+  occurrences: number;
+}
+
+export interface SecurityEvidence {
+  id: number;
+  job_id: number;
+  finding_id: number | null;
+  tool: string;
+  kind: string;
+  content_sha256: string;
+  byte_size: number;
+  created_at: string;
+  content?: string;
+}
+
 export interface ScanProfile {
   key: string;
   name: string;

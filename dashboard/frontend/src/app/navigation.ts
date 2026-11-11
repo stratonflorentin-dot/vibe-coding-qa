@@ -6,6 +6,7 @@ import {
   ScanSearch,
   Settings,
   ShieldAlert,
+  ShieldCheck,
   type LucideIcon,
 } from "lucide-react";
 
@@ -69,6 +70,17 @@ export const NAV_GROUPS: NavGroup[] = [
         label: "Dependencies",
         icon: PackageSearch,
         description: "Direct and transitive packages with advisory lookups.",
+      },
+    ],
+  },
+  {
+    label: "Security",
+    items: [
+      {
+        to: "/security",
+        label: "Security Lab",
+        icon: ShieldCheck,
+        description: "Authorized live-target assessments through isolated customer-run workers.",
       },
     ],
   },

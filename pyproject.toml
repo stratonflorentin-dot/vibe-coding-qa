@@ -13,6 +13,7 @@ dependencies = [
     "pydantic>=2.8,<3",
     "uvicorn>=0.30,<1",
     "httpx>=0.27,<1",
+    "dnspython>=2.6,<3",
 ]
 
 [project.scripts]
@@ -22,7 +23,7 @@ vibe-coding-qa = "dashboard.launcher:main"
 vcqa = "vibe_coding_qa.cli:main"
 
 [tool.setuptools.packages.find]
-include = ["vibe_coding_qa*", "dashboard*"]
+include = ["vibe_coding_qa*", "dashboard*", "security_worker*"]
 exclude = ["tests*", "dashboard.frontend.node_modules*"]
 
 [tool.setuptools.package-data]

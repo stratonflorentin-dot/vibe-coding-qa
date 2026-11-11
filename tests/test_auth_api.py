@@ -20,6 +20,35 @@ except Exception:  # noqa: BLE001
 
 OWNER_PW = "ownerpass123"
 VIEWER_PW = "viewerpass123"
+ANALYST_PW = "analystpass0123"
+ADMIN_PW = "adminpass1234"
+
+#: Mutating routes only an administrator (or owner) may call.
+ADMIN_ONLY_ROUTES = [
+    ("POST", "/api/repositories", {}),
+    ("DELETE", "/api/repositories/1", None),
+    ("DELETE", "/api/scans/1", None),
+    ("PUT", "/api/settings/scan", {}),
+    ("PUT", "/api/settings/ai", {}),
+    ("POST", "/api/ai/remediations/1/approve", {"confirm": True}),
+    ("POST", "/api/ai/remediations/1/rollback", None),
+]
+
+#: Mutating routes a security analyst (and above) may call.
+ANALYST_ROUTES = [
+    ("POST", "/api/scans", {}),
+    ("POST", "/api/scans/1/cancel", None),
+    ("PATCH", "/api/findings/1", {"status": "open"}),
+    ("POST", "/api/repositories/1/refresh", None),
+    ("POST", "/api/settings/ai/test", None),
+    ("POST", "/api/ai/chat", {"message": "hello"}),
+    ("POST", "/api/ai/summary", {}),
+    ("POST", "/api/ai/threat-model", {"repository_id": 1}),
+    ("POST", "/api/ai/findings/1/review", {"kind": "analyst"}),
+    ("POST", "/api/ai/findings/1/test", {}),
+    ("POST", "/api/ai/remediations", {"finding_id": 1}),
+    ("DELETE", "/api/ai/conversations/1", None),
+]
 
 
 @unittest.skipUnless(WEB_STACK, "FastAPI/httpx are not installed")
@@ -49,6 +78,23 @@ class AuthApiTests(unittest.TestCase):
 
     def _setup_owner(self):
         return self.client.post("/api/auth/setup", json={"username": "owner", "password": OWNER_PW})
+
+    def _create_user(self, username: str, password: str, role: str) -> None:
+        response = self.client.post(
+            "/api/auth/users", json={"username": username, "password": password, "role": role}
+        )
+        self.assertEqual(response.status_code, 201, response.text)
+
+    def _login(self, username: str, password: str) -> "TestClient":
+        client = self._anon()
+        response = client.post("/api/auth/login", json={"username": username, "password": password})
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertTrue(response.json()["authenticated"])
+        return client
+
+    @staticmethod
+    def _call(client: "TestClient", method: str, path: str, body):
+        return client.request(method, path) if body is None else client.request(method, path, json=body)
 
     def test_open_mode_then_setup_switches_to_accounts(self):
         status = self.client.get("/api/auth/status").json()
@@ -102,6 +148,69 @@ class AuthApiTests(unittest.TestCase):
         self.assertEqual(
             viewer.post("/api/auth/users", json={"username": "x", "password": "xpassword123", "role": "viewer"}).status_code,
             403,
+        )
+
+    def test_rbac_viewer_is_read_only(self):
+        self._setup_owner()
+        self._create_user("viewer2", VIEWER_PW, "viewer")
+        viewer = self._login("viewer2", VIEWER_PW)
+        # Reads are fine; every mutation is refused at the role gate.
+        self.assertEqual(viewer.get("/api/repositories").status_code, 200)
+        for method, path, body in ADMIN_ONLY_ROUTES + ANALYST_ROUTES:
+            with self.subTest(method=method, path=path):
+                response = self._call(viewer, method, path, body)
+                self.assertEqual(response.status_code, 403, f"{method} {path} -> {response.status_code}")
+
+    def test_rbac_analyst_can_scan_but_not_administer(self):
+        self._setup_owner()
+        self._create_user("analyst1", ANALYST_PW, "security_analyst")
+        analyst = self._login("analyst1", ANALYST_PW)
+        # Reaching the handler (any non-403) proves the analyst gate let it through.
+        for method, path, body in ANALYST_ROUTES:
+            with self.subTest(method=method, path=path):
+                response = self._call(analyst, method, path, body)
+                self.assertNotEqual(response.status_code, 403, f"{method} {path} was blocked")
+        for method, path, body in ADMIN_ONLY_ROUTES:
+            with self.subTest(method=method, path=path):
+                response = self._call(analyst, method, path, body)
+                self.assertEqual(response.status_code, 403, f"{method} {path} -> {response.status_code}")
+
+    def test_rbac_admin_can_administer(self):
+        self._setup_owner()
+        self._create_user("admin1", ADMIN_PW, "administrator")
+        admin = self._login("admin1", ADMIN_PW)
+        for method, path, body in ADMIN_ONLY_ROUTES:
+            with self.subTest(method=method, path=path):
+                response = self._call(admin, method, path, body)
+                self.assertNotEqual(response.status_code, 403, f"{method} {path} was blocked")
+
+    def test_csrf_rejects_cross_site_mutation(self):
+        self._setup_owner()
+        payload = {"message": "hello"}
+        blocked = self.client.post("/api/ai/chat", json=payload, headers={"Origin": "https://evil.example"})
+        self.assertEqual(blocked.status_code, 403)
+        self.assertEqual(blocked.json().get("code"), "csrf_rejected")
+        referer = self.client.post("/api/ai/chat", json=payload, headers={"Referer": "https://evil.example/page"})
+        self.assertEqual(referer.status_code, 403)
+        # An opaque origin ("null") is never trusted.
+        self.assertEqual(
+            self.client.post("/api/ai/chat", json=payload, headers={"Origin": "null"}).status_code, 403
+        )
+
+    def test_csrf_allows_same_origin_and_non_browser_clients(self):
+        self._setup_owner()
+        payload = {"message": "hello"}
+        # The dashboard's own origin (TestClient host) is same-origin.
+        same = self.client.post("/api/ai/chat", json=payload, headers={"Origin": "http://testserver"})
+        self.assertNotEqual(same.status_code, 403)
+        # A configured dev origin is accepted too.
+        dev = self.client.post("/api/ai/chat", json=payload, headers={"Origin": "http://localhost:5173"})
+        self.assertNotEqual(dev.status_code, 403)
+        # No Origin/Referer: a CLI/curl caller holds no ambient cookie to abuse.
+        self.assertNotEqual(self.client.post("/api/ai/chat", json=payload).status_code, 403)
+        # Reads are never affected by the guard.
+        self.assertEqual(
+            self.client.get("/api/repositories", headers={"Origin": "https://evil.example"}).status_code, 200
         )
 
     def test_setup_is_blocked_after_completion(self):

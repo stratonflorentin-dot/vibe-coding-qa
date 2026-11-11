@@ -17,11 +17,13 @@ from ..schemas import (
     ScanSettingsOut,
 )
 from ..services.settings import scan_settings, update_scan_settings
-from .deps import Services, get_services
+from .deps import Services, get_services, require_admin, require_analyst
 
 router = APIRouter(tags=["system"])
 
 ServicesDep = Annotated[Services, Depends(get_services)]
+AdminDep = Annotated[dict, Depends(require_admin)]
+AnalystDep = Annotated[dict, Depends(require_analyst)]
 
 
 @router.get("/api/health", response_model=HealthOut)
@@ -49,7 +51,7 @@ def read_scan_settings(services: ServicesDep) -> dict:
 
 
 @router.put("/api/settings/scan", response_model=ScanSettingsOut)
-def write_scan_settings(payload: ScanSettingsIn, services: ServicesDep) -> dict:
+def write_scan_settings(payload: ScanSettingsIn, services: ServicesDep, _user: AdminDep) -> dict:
     return update_scan_settings(services.store, payload)
 
 
@@ -60,10 +62,10 @@ def read_ai_settings(services: ServicesDep) -> dict:
 
 
 @router.put("/api/settings/ai", response_model=AISettingsOut)
-def write_ai_settings(payload: AISettingsIn, services: ServicesDep) -> dict:
+def write_ai_settings(payload: AISettingsIn, services: ServicesDep, _user: AdminDep) -> dict:
     return services.ai.update_settings(payload)
 
 
 @router.post("/api/settings/ai/test", response_model=AIConnectionTestOut)
-def test_ai_connection(services: ServicesDep) -> dict:
+def test_ai_connection(services: ServicesDep, _user: AnalystDep) -> dict:
     return services.ai.test_connection()

@@ -2,6 +2,7 @@ import { ArrowLeft, Bot, Check, Copy, FileDown, Sparkles, Wrench } from "lucide-
 import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 
+import { useApp } from "@/app/app-context";
 import { DataState } from "@/components/common/data-state";
 import { FindingStatusBadge } from "@/components/common/status-badge";
 import { PageHeader } from "@/components/common/page-header";
@@ -19,6 +20,7 @@ import { formatDateTime, titleCase } from "@/lib/format";
 import type { FindingStatus } from "@/types/api";
 
 export function FindingDetailPage() {
+  const { health } = useApp();
   const { findingId: rawId } = useParams();
   const id = Number.parseInt(rawId ?? "", 10);
   const valid = Number.isInteger(id) && id > 0;
@@ -27,8 +29,11 @@ export function FindingDetailPage() {
   const finding = useAsync(() => api.findings.get(id), [id], { enabled: valid });
   const [busy, setBusy] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [aiUnavailable, setAiUnavailable] = useState(false);
   const [aiAnswer, setAiAnswer] = useState<string | null>(null);
   const [proposalId, setProposalId] = useState<number | null>(null);
+  const aiDisabled = aiUnavailable || health?.ai_configured !== true;
+  const showAiUnavailable = aiUnavailable || health?.ai_configured === false;
 
   if (!valid) {
     return <EmptyState icon={ArrowLeft} title="Finding not found" description="The finding id must be a positive number." action={<Button asChild variant="outline"><Link to="/findings">Back to findings</Link></Button>} />;
@@ -60,7 +65,7 @@ export function FindingDetailPage() {
         message: `Explain finding ${data.rule} at ${data.file}:${data.line}. Use the stored scan evidence and distinguish confirmed facts from hypotheses.`,
       });
       if (!response.configured) {
-        setError("AI is not configured. Add server-side provider credentials in Settings before requesting an explanation.");
+        setAiUnavailable(true);
       } else {
         setAiAnswer(response.message.content);
       }
@@ -77,7 +82,7 @@ export function FindingDetailPage() {
     try {
       const response = await api.ai.reviewFinding(id, "analyst");
       if (!response.configured) {
-        setError(response.error ?? "AI is not configured.");
+        setAiUnavailable(true);
       } else if (response.error) {
         setError(response.error);
       } else {
@@ -100,7 +105,12 @@ export function FindingDetailPage() {
       setProposalId(proposal.id);
       toast({ title: "Patch proposal is ready", description: "Review it before applying any change.", variant: "success" });
     } catch (caught) {
-      setError(caught instanceof ApiError ? caught.message : "A patch proposal could not be generated.");
+      const message = caught instanceof ApiError ? caught.message : "";
+      if (/AI is not configured/i.test(message)) {
+        setAiUnavailable(true);
+      } else {
+        setError(message || "A patch proposal could not be generated.");
+      }
     } finally {
       setBusy("");
     }
@@ -165,6 +175,19 @@ export function FindingDetailPage() {
               <span className="text-sm text-muted-foreground">Confidence: {titleCase(data.confidence ?? "unknown")}</span>
             </div>
 
+            {showAiUnavailable ? (
+              <Alert variant="warning">
+                <AlertTitle>AI assistance is unavailable</AlertTitle>
+                <AlertDescription>
+                  Configure an AI provider in{" "}
+                  <Link to="/settings" className="font-medium underline underline-offset-4">
+                    Settings
+                  </Link>{" "}
+                  to explain this finding or generate a fix. The deterministic finding, evidence,
+                  status actions, and export remain available.
+                </AlertDescription>
+              </Alert>
+            ) : null}
             {error ? <Alert variant="destructive"><AlertTitle>Action could not be completed</AlertTitle><AlertDescription>{error}</AlertDescription></Alert> : null}
 
             <div className="grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(280px,1fr)]">
@@ -231,9 +254,9 @@ export function FindingDetailPage() {
                 <Card>
                   <CardHeader><CardTitle>Actions</CardTitle><CardDescription>AI assistance is optional and never authoritative.</CardDescription></CardHeader>
                   <CardContent className="space-y-2">
-                    <Button className="w-full" variant="outline" disabled={busy !== ""} onClick={() => void askAssistant()}><Bot />{busy === "assistant" ? "Asking…" : "Ask AI"}</Button>
-                    <Button className="w-full" variant="outline" disabled={busy !== ""} onClick={() => void explainFinding()}><Sparkles />{busy === "review" ? "Analyzing…" : "Explain vulnerability"}</Button>
-                    <Button className="w-full" disabled={busy !== ""} onClick={() => void generateFix()}><Wrench />{busy === "fix" ? "Generating…" : "Generate fix"}</Button>
+                    <Button className="w-full" variant="outline" disabled={busy !== "" || aiDisabled} onClick={() => void askAssistant()}><Bot />{busy === "assistant" ? "Asking…" : "Ask AI"}</Button>
+                    <Button className="w-full" variant="outline" disabled={busy !== "" || aiDisabled} onClick={() => void explainFinding()}><Sparkles />{busy === "review" ? "Analyzing…" : "Explain vulnerability"}</Button>
+                    <Button className="w-full" disabled={busy !== "" || aiDisabled} onClick={() => void generateFix()}><Wrench />{busy === "fix" ? "Generating…" : "Generate fix"}</Button>
                     {proposalId !== null ? <Button className="w-full" variant="secondary" onClick={() => navigate("/remediations")}><Copy />View patch proposal #{proposalId}</Button> : null}
                     <p className="pt-2 text-xs text-muted-foreground">A reviewed or dismissed finding is not technically fixed. The release gate remains controlled by a fresh engine scan.</p>
                   </CardContent>

@@ -11,11 +11,12 @@ from vibe_coding_qa.scanners import redact_secrets
 from ..schemas import FindingDetailOut, FindingListOut, FindingOut, FindingStatusUpdate
 from ..services.paths import repository_dir
 from ..security import ValidationError, resolve_repo_file
-from .deps import Services, get_services
+from .deps import Services, get_services, require_analyst
 
 router = APIRouter(tags=["findings"])
 
 ServicesDep = Annotated[Services, Depends(get_services)]
+AnalystDep = Annotated[dict, Depends(require_analyst)]
 
 _EVIDENCE_RADIUS = 12
 
@@ -72,7 +73,7 @@ def get_finding(finding_id: int, services: ServicesDep) -> dict:
 
 @router.patch("/api/findings/{finding_id}", response_model=FindingOut)
 def update_finding_status(
-    finding_id: int, payload: FindingStatusUpdate, services: ServicesDep
+    finding_id: int, payload: FindingStatusUpdate, services: ServicesDep, _user: AnalystDep
 ) -> dict:
     """Triage a single finding. The status is local to the dashboard."""
     if services.store.get_finding(finding_id) is None:

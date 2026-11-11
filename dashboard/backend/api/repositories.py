@@ -7,11 +7,13 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Query
 
 from ..schemas import GenericMessage, RepositoryCreate, RepositoryOut, ScanListOut
-from .deps import Services, get_services
+from .deps import Services, get_services, require_admin, require_analyst
 
 router = APIRouter(tags=["repositories"])
 
 ServicesDep = Annotated[Services, Depends(get_services)]
+AdminDep = Annotated[dict, Depends(require_admin)]
+AnalystDep = Annotated[dict, Depends(require_analyst)]
 
 
 @router.get("/api/repositories", response_model=list[RepositoryOut])
@@ -20,7 +22,7 @@ def list_repositories(services: ServicesDep) -> list[dict]:
 
 
 @router.post("/api/repositories", response_model=RepositoryOut, status_code=201)
-def create_repository(payload: RepositoryCreate, services: ServicesDep) -> dict:
+def create_repository(payload: RepositoryCreate, services: ServicesDep, _user: AdminDep) -> dict:
     """Register a local directory or a remote git source.
 
     Nothing is cloned here: a remote repository is fetched the first time it is
@@ -37,12 +39,12 @@ def get_repository(repository_id: int, services: ServicesDep) -> dict:
 
 
 @router.post("/api/repositories/{repository_id}/refresh", response_model=RepositoryOut)
-def refresh_repository(repository_id: int, services: ServicesDep) -> dict:
+def refresh_repository(repository_id: int, services: ServicesDep, _user: AnalystDep) -> dict:
     return services.repositories.refresh(repository_id)
 
 
 @router.delete("/api/repositories/{repository_id}", response_model=GenericMessage)
-def delete_repository(repository_id: int, services: ServicesDep) -> dict:
+def delete_repository(repository_id: int, services: ServicesDep, _user: AdminDep) -> dict:
     services.repositories.require(repository_id)
     services.repositories.delete(repository_id)
     return {"detail": "Repository and its scan history were deleted."}

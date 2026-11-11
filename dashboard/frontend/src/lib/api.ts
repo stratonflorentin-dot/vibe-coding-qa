@@ -32,6 +32,13 @@ import type {
   ScanOptions,
   ScanProfile,
   ScanSettings,
+  SecurityEvidence,
+  SecurityFinding,
+  SecurityJob,
+  SecurityProfile,
+  SecuritySeverityCounts,
+  SecurityTarget,
+  SecurityWorker,
   SummaryResponse,
   TestGenerateResponse,
   ThreatModelResponse,
@@ -293,6 +300,87 @@ export const intel = {
     request<Dependencies>(`/api/dependencies/${repositoryId}${buildQuery({ osv })}`),
 };
 
+// -------------------------------------------------------------- security lab
+export const security = {
+  summary: (target_id?: number) =>
+    request<SecuritySeverityCounts>("/api/security/summary" + buildQuery({ target_id })),
+  profiles: () => request<SecurityProfile[]>("/api/security/profiles"),
+  workers: () => request<SecurityWorker[]>("/api/security/workers"),
+  workerStatus: (id: number) => request<SecurityWorker>(`/api/security/workers/${id}/status`),
+  createWorker: (payload: {
+    name: string;
+    base_url: string;
+    token: string;
+    placement: SecurityWorker["placement"];
+    allowed_networks: string[];
+  }) => request<SecurityWorker>("/api/security/workers", json("POST", payload)),
+  updateWorker: (id: number, payload: Partial<{
+    name: string;
+    base_url: string;
+    token: string;
+    placement: SecurityWorker["placement"];
+    allowed_networks: string[];
+    enabled: boolean;
+  }>) => request<SecurityWorker>(`/api/security/workers/${id}`, json("PATCH", payload)),
+  revokeWorker: (id: number) =>
+    request<{ detail: string }>(`/api/security/workers/${id}/revoke`, { method: "POST" }),
+  deleteWorker: (id: number) =>
+    request<{ detail: string }>(`/api/security/workers/${id}`, { method: "DELETE" }),
+  targets: () => request<SecurityTarget[]>("/api/security/targets"),
+  createTarget: (payload: {
+    value: string;
+    environment: SecurityTarget["environment"];
+    ownership_confirmed: boolean;
+    scope?: string;
+    profile: string;
+    rate_limit?: number;
+    worker_id?: number;
+    allowed_cidrs: string[];
+    notes?: string;
+    verify_method?: "dns" | "http";
+  }) => request<{ target: SecurityTarget; verification_token: string | null }>(
+    "/api/security/targets",
+    json("POST", payload),
+  ),
+  verifyTarget: (id: number) =>
+    request<SecurityTarget>(`/api/security/targets/${id}/verify`, json("POST", {})),
+  deleteTarget: (id: number) =>
+    request<{ detail: string }>(`/api/security/targets/${id}`, { method: "DELETE" }),
+  startScan: (payload: {
+    target_id: number;
+    profile: string;
+    rate_limit?: number;
+    explicit_authorization: boolean;
+  }) => request<SecurityJob>("/api/security/scans", json("POST", payload)),
+  jobs: (params?: { status?: string; target_id?: number; limit?: number; offset?: number }) =>
+    request<{ items: SecurityJob[]; total: number }>("/api/security/jobs" + buildQuery(params)),
+  job: (id: number) => request<SecurityJob>(`/api/security/jobs/${id}`),
+  cancelJob: (id: number) =>
+    request<SecurityJob>(`/api/security/jobs/${id}/cancel`, json("POST", {})),
+  findings: (params?: {
+    target_id?: number;
+    job_id?: number;
+    severity?: string;
+    status?: string;
+    limit?: number;
+    offset?: number;
+  }) => request<{ items: SecurityFinding[]; total: number }>(
+    "/api/security/findings" + buildQuery(params),
+  ),
+  updateFinding: (id: number, status: SecurityFinding["status"]) =>
+    request<SecurityFinding>(`/api/security/findings/${id}`, json("PATCH", { status })),
+  verifyFinding: (id: number) =>
+    request<{ finding: SecurityFinding; verification_job_id: number; status: string }>(
+      `/api/security/findings/${id}/verify`,
+      json("POST", {}),
+    ),
+  evidence: (params?: { job_id?: number; finding_id?: number; limit?: number }) =>
+    request<SecurityEvidence[]>("/api/security/evidence" + buildQuery(params)),
+  evidenceItem: (id: number) => request<SecurityEvidence>(`/api/security/evidence/${id}`),
+  report: (target_id?: number) =>
+    request<Record<string, unknown>>("/api/security/report" + buildQuery({ target_id })),
+};
+
 // --------------------------------------------------------------------- auth
 export interface AuthStatus {
   auth_required: boolean;
@@ -315,4 +403,5 @@ export const api = {
   dashboard,
   ai,
   intel,
+  security,
 };

@@ -6,6 +6,7 @@ Run it with ``python -m dashboard.backend`` (or
 Security posture:
 * bound to localhost by default;
 * CORS restricted to the configured local origins;
+* state-changing requests are refused unless they are same-origin (CSRF guard);
 * a repository must live inside an allow-listed root to be registered;
 * the AI provider key stays on the server and is never returned;
 * the release gate is computed by the engine, never by the API or the AI layer.
@@ -27,7 +28,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from . import __version__
 from .ai.provider import AIError
-from .api import ai, auth, dashboard, findings, intel, repositories, scans, system
+from .api import ai, auth, dashboard, findings, intel, repositories, scans, security, system
 from .api.deps import build_services
 from .config import Settings, get_settings
 from .security import ValidationError, safe_error
@@ -94,6 +95,84 @@ class SessionAuthMiddleware:
         await send({"type": "http.response.body", "body": body})
 
 
+#: Methods that can change state; only these need a CSRF check.
+_MUTATING_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+
+
+class SameOriginGuard:
+    """Reject cross-site state-changing requests (CSRF, defence in depth).
+
+    The session cookie is already ``SameSite=Lax``; this adds an explicit
+    same-origin check so a mutation is only accepted when the browser states it
+    came from the dashboard itself. Requests that carry no ``Origin``/``Referer``
+    (the CLI, ``curl``, the SSE stream) are left untouched: they hold no ambient
+    cookie a third-party page could ride on. ``/api/auth/*`` is exempt, matching
+    ``SessionAuthMiddleware``, so login/setup can never be locked out by a proxy
+    that rewrites ``Host``.
+    """
+
+    def __init__(self, app, *, allowed_origins):
+        self.app = app
+        self.allowed = {origin.rstrip("/").lower() for origin in allowed_origins}
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        path = scope.get("path", "") or ""
+        if (
+            scope.get("method", "GET") not in _MUTATING_METHODS
+            or not path.startswith("/api/")
+            or path.startswith("/api/auth/")
+        ):
+            await self.app(scope, receive, send)
+            return
+
+        headers = {
+            key.decode("latin-1").lower(): value.decode("latin-1")
+            for key, value in scope.get("headers") or []
+        }
+        if self._same_origin(headers):
+            await self.app(scope, receive, send)
+            return
+
+        body = b'{"detail":"Cross-site request rejected.","code":"csrf_rejected"}'
+        await send({
+            "type": "http.response.start",
+            "status": 403,
+            "headers": [
+                (b"content-type", b"application/json"),
+                (b"content-length", str(len(body)).encode("ascii")),
+            ],
+        })
+        await send({"type": "http.response.body", "body": body})
+
+    def _same_origin(self, headers: dict) -> bool:
+        origin = headers.get("origin")
+        if origin:
+            return self._origin_allowed(origin, headers)
+        referer = headers.get("referer")
+        if referer:
+            return self._origin_allowed(referer, headers)
+        return True
+
+    def _origin_allowed(self, value: str, headers: dict) -> bool:
+        """True when ``value`` is a configured origin or the request's own host."""
+        parsed = urlsplit(value)
+        if not parsed.scheme or not parsed.netloc:
+            return False  # e.g. "null" - an opaque origin is never trusted
+        if f"{parsed.scheme}://{parsed.netloc}".lower() in self.allowed:
+            return True
+        candidates = set()
+        host = headers.get("host")
+        if host:
+            candidates.add(host.lower())
+        forwarded_host = headers.get("x-forwarded-host", "").split(",")[0].strip()
+        if forwarded_host:
+            candidates.add(forwarded_host.lower())
+        return parsed.netloc.lower() in candidates
+
+
 class _SpaStaticFiles(StaticFiles):
     """Serve the built dashboard and fall back to index.html for client routes."""
 
@@ -131,9 +210,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # A scan that was running when the previous process died can never
         # finish; mark it failed so the UI never shows a phantom "running" job.
         services.scans.recover_interrupted()
+        services.store.mark_interrupted_security_jobs()
         try:
             yield
         finally:
+            services.security_lab.shutdown()
             services.scans.shutdown()
             services.database.close()
 
@@ -154,6 +235,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
         allow_headers=["Content-Type", "Accept"],
     )
+
+    # Same-origin guard sits inside the auth gate: an unauthenticated request is
+    # rejected first, then a cross-site mutation is refused (CSRF). It runs before
+    # CORS so plain ``curl``/CLI callers without an Origin header are unaffected.
+    app.add_middleware(SameOriginGuard, allowed_origins=resolved.cors_origins)
 
     # Added last on purpose: Starlette applies the most recently added middleware
     # outermost, so the auth gate protects every route (and CORS preflight). It is
@@ -180,7 +266,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             content={"detail": safe_error(exc, "The requested item was not found."), "code": "not_found"},
         )
 
-    for module in (system, auth, dashboard, repositories, scans, findings, ai, intel):
+    for module in (system, auth, dashboard, repositories, scans, security, findings, ai, intel):
         app.include_router(module.router)
 
     # Serve the built single-page dashboard when present, so one process (and one

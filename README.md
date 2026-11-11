@@ -84,7 +84,13 @@ python -m dashboard.backend
 
 Scans persist in `dashboard/data/vcqa.sqlite3`. Docker test execution is disabled by default and requires both operator enablement in Settings and explicit per-scan permission. The backend never pulls images or installs repository dependencies.
 
-The dashboard includes persisted overview metrics, repositories, real scan jobs and SSE events, scan comparison, findings and triage, static architecture and dependency views, AI chat/reviews/remediation proposals, reports, and scan/AI settings. Limitations: architecture relationships are static-analysis evidence rather than a runtime graph; reports can be printed to PDF by the browser but do not currently have server-side PDF generation; GitHub pull-request/CI integrations, SARIF export, authentication, and verified post-patch rescan workflows are not implemented. AI output remains advisory and never controls the release gate.
+The dashboard includes persisted overview metrics, repositories, real scan jobs and SSE events, scan comparison, findings and triage, static architecture and dependency views, AI chat/reviews/remediation proposals, reports, scan/AI settings, account authentication with RBAC, and an optional Security Lab. Limitations: architecture relationships are static-analysis evidence rather than a runtime graph; reports can be printed to PDF by the browser but do not currently have server-side PDF generation; GitHub pull-request/CI integrations and SARIF export are not implemented. AI output remains advisory and never controls the release gate.
+
+### Optional Security Lab
+
+Security Lab runs scanners in a separate, customer-operated Kali worker. The dashboard API only orchestrates authenticated jobs and stores normalized findings; it never starts scanner binaries or mounts the Docker socket. Nmap, Nuclei, and passive OWASP ZAP are the initial integrations. Other registered tools show as unavailable unless their executable and version are actually verified on the worker.
+
+Targets require an ownership challenge or explicit administrator approval for an authorized private CIDR. Tool invocations are allowlisted and bounded, but application checks do not replace network egress controls. Deploy the worker only on a network with restrictive outbound filtering, and follow the [Security Worker deployment guide](security_worker/README.md) before registering a worker or scanning a target.
 
 ## What it helps with
 
@@ -310,3 +316,21 @@ The looping cartoon GIF is generated with Python and Pillow. Recreate it from th
 python -m pip install pillow
 python scripts/generate_mascots.py
 ```
+
+## Boot splash and theme
+
+The dashboard opens on a short Mario/Luigi-style boot splash that states the
+inspiration in the UI: **inspired by Mario & Luigi — an independent fan-made
+tribute, not affiliated with Nintendo.**
+
+The splash plays a boot theme. No third-party music is bundled: the default is
+an original 8-bit fanfare synthesized in the browser with the Web Audio API
+(`dashboard/frontend/src/lib/chiptune.ts`), written for this project rather than
+a rendition of any existing game theme. To use a different track, place a file
+you have the rights to publish at `dashboard/frontend/public/audio/boot-theme.mp3`
+and it is used instead. Visitors can silence the theme from the splash, and the
+choice is remembered.
+
+Browsers mute audio until the page has been interacted with. When autoplay is
+refused the splash shows a "Tap to play the boot theme" control instead of
+failing silently.

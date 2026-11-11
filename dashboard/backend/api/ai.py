@@ -29,16 +29,18 @@ from ..schemas import (
     ThreatModelOut,
     ThreatModelRequest,
 )
-from .deps import Services, get_services
+from .deps import Services, get_services, require_admin, require_analyst
 
 router = APIRouter(tags=["ai"])
 
 ServicesDep = Annotated[Services, Depends(get_services)]
+AnalystDep = Annotated[dict, Depends(require_analyst)]
+AdminDep = Annotated[dict, Depends(require_admin)]
 
 
 # ------------------------------------------------------------------- assistant
 @router.post("/api/ai/chat", response_model=AIChatResponse)
-def chat(payload: AIChatRequest, services: ServicesDep) -> dict:
+def chat(payload: AIChatRequest, services: ServicesDep, _user: AnalystDep) -> dict:
     return services.ai.chat(
         message=payload.message,
         repository_id=payload.repository_id,
@@ -64,7 +66,7 @@ def get_conversation(conversation_id: int, services: ServicesDep) -> dict:
 
 
 @router.delete("/api/ai/conversations/{conversation_id}", response_model=GenericMessage)
-def delete_conversation(conversation_id: int, services: ServicesDep) -> dict:
+def delete_conversation(conversation_id: int, services: ServicesDep, _user: AnalystDep) -> dict:
     if services.store.get_conversation(conversation_id) is None:
         raise KeyError(f"Conversation {conversation_id} was not found.")
     services.store.delete_conversation(conversation_id)
@@ -73,19 +75,23 @@ def delete_conversation(conversation_id: int, services: ServicesDep) -> dict:
 
 # -------------------------------------------------------------- security analyst
 @router.post("/api/ai/findings/{finding_id}/review", response_model=AIReviewOut)
-def review_finding(finding_id: int, payload: AIReviewRequest, services: ServicesDep) -> dict:
+def review_finding(
+    finding_id: int, payload: AIReviewRequest, services: ServicesDep, _user: AnalystDep
+) -> dict:
     return services.ai.review_finding(finding_id, payload.kind)
 
 
 @router.post("/api/ai/findings/{finding_id}/test", response_model=TestGenerateOut)
-def generate_test(finding_id: int, services: ServicesDep) -> dict:
+def generate_test(finding_id: int, services: ServicesDep, _user: AnalystDep) -> dict:
     """Draft a regression test. It is returned as text and never written to disk."""
     return services.ai.generate_test(finding_id)
 
 
 # ----------------------------------------------------------------- remediation
 @router.post("/api/ai/remediations", response_model=RemediationOut, status_code=201)
-def propose_remediation(payload: RemediationProposeRequest, services: ServicesDep) -> dict:
+def propose_remediation(
+    payload: RemediationProposeRequest, services: ServicesDep, _user: AnalystDep
+) -> dict:
     """Generate a patch proposal. Nothing is applied to the working tree."""
     return services.ai.propose_remediation(payload.finding_id)
 
@@ -109,7 +115,7 @@ def get_remediation(proposal_id: int, services: ServicesDep) -> dict:
 
 @router.post("/api/ai/remediations/{proposal_id}/approve", response_model=RemediationOut)
 def approve_remediation(
-    proposal_id: int, payload: ApproveRequest, services: ServicesDep
+    proposal_id: int, payload: ApproveRequest, services: ServicesDep, _user: AdminDep
 ) -> dict:
     """Apply a proposal to the working tree.
 
@@ -125,18 +131,18 @@ def approve_remediation(
 
 
 @router.post("/api/ai/remediations/{proposal_id}/rollback", response_model=RemediationOut)
-def rollback_remediation(proposal_id: int, services: ServicesDep) -> dict:
+def rollback_remediation(proposal_id: int, services: ServicesDep, _user: AdminDep) -> dict:
     return services.ai.rollback_remediation(proposal_id)
 
 
 # ---------------------------------------------------------------------- reports
 @router.post("/api/ai/summary", response_model=SummaryOut)
-def executive_summary(payload: SummaryRequest, services: ServicesDep) -> dict:
+def executive_summary(payload: SummaryRequest, services: ServicesDep, _user: AnalystDep) -> dict:
     return services.ai.executive_summary(
         repository_id=payload.repository_id, scan_id=payload.scan_id
     )
 
 
 @router.post("/api/ai/threat-model", response_model=ThreatModelOut)
-def threat_model(payload: ThreatModelRequest, services: ServicesDep) -> dict:
+def threat_model(payload: ThreatModelRequest, services: ServicesDep, _user: AnalystDep) -> dict:
     return services.ai.threat_model(payload.repository_id)
