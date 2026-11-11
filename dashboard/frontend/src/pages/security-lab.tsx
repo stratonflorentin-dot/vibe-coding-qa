@@ -31,6 +31,15 @@ function errorMessage(error: unknown): string {
   return error instanceof ApiError ? error.message : "The request could not be completed.";
 }
 
+/**
+ * Coerce a list endpoint response into an array. A stale or misconfigured
+ * backend may serve the SPA shell (a string) for an unknown path; without this
+ * guard `.find`/`.map` would throw and crash the whole page.
+ */
+function asArray<T>(value: T[] | unknown): T[] {
+  return Array.isArray(value) ? (value as T[]) : [];
+}
+
 export function SecurityLabPage() {
   const { toast } = useToast();
   const profiles = useAsync(() => api.security.profiles(), []);
@@ -66,8 +75,8 @@ export function SecurityLabPage() {
     return () => window.clearInterval(timer);
   }, [activeJobs, reloadJobs, reloadFindings, reloadEvidence, reloadSummary]);
 
-  const selectedProfileInfo = (profiles.data ?? []).find((item) => item.key === selectedProfile);
-  const authorizedTargets = (targets.data ?? []).filter(
+  const selectedProfileInfo = asArray<SecurityProfile>(profiles.data).find((item) => item.key === selectedProfile);
+  const authorizedTargets = asArray<SecurityTarget>(targets.data).filter(
     (target) => target.ownership_confirmed && target.verify_status === "verified" && target.worker_id,
   );
 
@@ -89,7 +98,7 @@ export function SecurityLabPage() {
     setError(null);
     try {
       const status = await api.security.workerStatus(worker.id);
-      workers.setData((current) => (current ?? []).map((item) => item.id === status.id ? status : item));
+      workers.setData((current) => asArray<SecurityWorker>(current).map((item) => item.id === status.id ? status : item));
     } catch (caught) {
       setError(errorMessage(caught));
     } finally {
@@ -209,7 +218,7 @@ export function SecurityLabPage() {
         <DataState loading={workers.loading} error={workers.error} onRetry={() => void workers.reload()} loadingRows={2}>
           {(workers.data?.length ?? 0) > 0 ? (
             <div className="grid gap-3 lg:grid-cols-2">
-              {(workers.data ?? []).map((worker) => (
+              {asArray<SecurityWorker>(workers.data).map((worker) => (
                 <WorkerCard key={worker.id} worker={worker} busy={busy === `worker-${worker.id}`} onCheck={() => void checkWorker(worker)} />
               ))}
             </div>
@@ -223,7 +232,7 @@ export function SecurityLabPage() {
         <h2 className="text-lg font-semibold">Tool inventory</h2>
         {workers.data?.some((worker) => worker.tools?.length) ? (
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-            {(workers.data ?? []).flatMap((worker) => (worker.tools ?? []).map((tool) => (
+            {asArray<SecurityWorker>(workers.data).flatMap((worker) => (worker.tools ?? []).map((tool) => (
               <Card key={`${worker.id}-${tool.key}`}>
                 <CardContent className="flex items-start justify-between gap-3 p-4">
                   <div className="min-w-0">
@@ -242,15 +251,15 @@ export function SecurityLabPage() {
         <h2 className="text-lg font-semibold">Scan profiles</h2>
         <DataState loading={profiles.loading} error={profiles.error} onRetry={() => void profiles.reload()} loadingRows={2}>
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-            {(profiles.data ?? []).map((profile) => <ProfileCard key={profile.key} profile={profile} />)}
+            {asArray<SecurityProfile>(profiles.data).map((profile) => <ProfileCard key={profile.key} profile={profile} />)}
           </div>
         </DataState>
       </section>
 
       <div className="grid gap-4 xl:grid-cols-2">
         <TargetPanel
-          workers={workers.data ?? []}
-          profiles={profiles.data ?? []}
+          workers={asArray<SecurityWorker>(workers.data)}
+          profiles={asArray<SecurityProfile>(profiles.data)}
           busy={busy}
           onCreated={async (target, token) => {
             setChallenge(token ? { target, token } : null);
@@ -278,7 +287,7 @@ export function SecurityLabPage() {
                 <Label htmlFor="security-profile">Profile</Label>
                 <Select value={selectedProfile} onValueChange={setSelectedProfile}>
                   <SelectTrigger id="security-profile"><SelectValue /></SelectTrigger>
-                  <SelectContent>{(profiles.data ?? []).map((profile) => <SelectItem key={profile.key} value={profile.key}>{profile.name}</SelectItem>)}</SelectContent>
+                  <SelectContent>{asArray<SecurityProfile>(profiles.data).map((profile) => <SelectItem key={profile.key} value={profile.key}>{profile.name}</SelectItem>)}</SelectContent>
                 </Select>
               </div>
               {selectedProfileInfo ? (
@@ -366,7 +375,7 @@ export function SecurityLabPage() {
         <DataState loading={evidence.loading} error={evidence.error} onRetry={() => void evidence.reload()} loadingRows={2}>
           {(evidence.data?.length ?? 0) > 0 ? (
             <div className="space-y-2">
-              {(evidence.data ?? []).map((item) => (
+              {asArray<SecurityEvidence>(evidence.data).map((item) => (
                 <button key={item.id} type="button" onClick={() => void openEvidence(item)} className="flex w-full items-center justify-between gap-3 rounded-md border px-3 py-2 text-left hover:bg-muted/40">
                   <span className="min-w-0"><span className="font-medium">{item.tool}</span><span className="ml-2 text-sm text-muted-foreground">Job #{item.job_id} · {item.byte_size.toLocaleString()} bytes · SHA-256 {item.content_sha256.slice(0, 12)}…</span></span>
                   {busy === `evidence-${item.id}` ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Clipboard className="h-4 w-4" />}
@@ -387,8 +396,8 @@ export function SecurityLabPage() {
         </Card>
       ) : null}
 
-      <WorkerSettings workers={workers.data ?? []} busy={busy} onCreated={async () => { await workers.reload(true); }} onError={setError} onBusy={setBusy} />
-      <TargetList targets={targets.data ?? []} workers={workers.data ?? []} onRefresh={async () => { await targets.reload(true); }} onError={setError} onBusy={setBusy} busy={busy} />
+      <WorkerSettings workers={asArray<SecurityWorker>(workers.data)} busy={busy} onCreated={async () => { await workers.reload(true); }} onError={setError} onBusy={setBusy} />
+      <TargetList targets={asArray<SecurityTarget>(targets.data)} workers={asArray<SecurityWorker>(workers.data)} onRefresh={async () => { await targets.reload(true); }} onError={setError} onBusy={setBusy} busy={busy} />
     </div>
   );
 }
