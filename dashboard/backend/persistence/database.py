@@ -176,6 +176,55 @@ MIGRATIONS: list[tuple[int, list[str]]] = [
             """,
         ],
     ),
+    (
+        2,
+        [
+            # Multi-user accounts for a self-hosted installation. The install is
+            # open or single-credential until the first user is created here.
+            """
+            CREATE TABLE users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT NOT NULL UNIQUE,
+                password_hash TEXT NOT NULL,
+                role TEXT NOT NULL,
+                is_active INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                last_login_at TEXT
+            )
+            """,
+            # Server-side sessions so a login can expire and be revoked. Only the
+            # SHA-256 of the token is stored, never the token itself.
+            """
+            CREATE TABLE user_sessions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                token_hash TEXT NOT NULL UNIQUE,
+                created_at TEXT NOT NULL,
+                expires_at TEXT NOT NULL,
+                revoked_at TEXT,
+                ip TEXT,
+                user_agent TEXT
+            )
+            """,
+            "CREATE INDEX idx_user_sessions_token ON user_sessions(token_hash)",
+            "CREATE INDEX idx_user_sessions_user ON user_sessions(user_id)",
+            # Append-only audit trail for sensitive actions.
+            """
+            CREATE TABLE audit_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts TEXT NOT NULL,
+                user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                username TEXT,
+                action TEXT NOT NULL,
+                target TEXT,
+                detail TEXT,
+                ip TEXT
+            )
+            """,
+            "CREATE INDEX idx_audit_id ON audit_log(id DESC)",
+        ],
+    ),
 ]
 
 

@@ -31,24 +31,25 @@ from .api import ai, auth, dashboard, findings, intel, repositories, scans, syst
 from .api.deps import build_services
 from .config import Settings, get_settings
 from .security import ValidationError, safe_error
-from .sessions import COOKIE_NAME, check_basic, cookie_value, valid_token
+from .accounts import PasswordPolicyError
+from .sessions import COOKIE_NAME, auth_credential, check_basic, cookie_value, valid_token
 
 
 class SessionAuthMiddleware:
-    """Session-cookie auth gate for a tunnelled/public deployment.
+    """Session gate for account mode and the legacy single credential.
 
-    Inert unless ``VCQA_BASIC_AUTH`` is set (``user:password``). It gates the
-    data API (``/api/*`` except ``/api/auth/*``) behind a signed session cookie,
-    or an HTTP Basic header for the CLI. Crucially it returns a plain JSON 401
-    **without** a ``WWW-Authenticate`` header, so the browser never shows its
-    native Basic-Auth popup - the SPA renders its own login screen instead. The
-    SPA's static assets are always served so that login screen can load. Pure
-    ASGI so SSE streaming responses are never buffered.
+    Inert in ``open`` mode (localhost, no users, no credential). In ``accounts``
+    mode it requires a valid server-side session cookie; the legacy
+    ``VCQA_BASIC_AUTH`` (cookie HMAC or an HTTP Basic header for the CLI) is also
+    accepted. It returns a plain JSON 401 **without** a ``WWW-Authenticate``
+    header, so the browser never shows its native popup - the SPA renders its own
+    login screen. The SPA's static assets and ``/api/auth/*`` are always served
+    so login can proceed. Pure ASGI so SSE responses are never buffered.
     """
 
-    def __init__(self, app, *, credential: str):
+    def __init__(self, app, *, services):
         self.app = app
-        self.credential = credential
+        self.services = services
 
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http":
@@ -60,11 +61,27 @@ class SessionAuthMiddleware:
         if method == "OPTIONS" or not path.startswith("/api/") or path.startswith("/api/auth/"):
             await self.app(scope, receive, send)
             return
-        headers = dict(scope.get("headers") or [])
-        token = cookie_value(headers.get(b"cookie", b"").decode("latin-1"), COOKIE_NAME)
-        if valid_token(self.credential, token) or check_basic(self.credential, headers.get(b"authorization", b"")):
+
+        accounts = self.services.accounts
+        mode = accounts.mode()
+        if mode == "open":
             await self.app(scope, receive, send)
             return
+
+        headers = dict(scope.get("headers") or [])
+        cookie_header = headers.get(b"cookie", b"").decode("latin-1")
+        token = cookie_value(cookie_header, COOKIE_NAME)
+
+        authorised = mode == "accounts" and accounts.resolve_session(token) is not None
+        if not authorised:
+            credential = auth_credential()
+            if credential and (valid_token(credential, token) or check_basic(credential, headers.get(b"authorization", b""))):
+                authorised = True
+
+        if authorised:
+            await self.app(scope, receive, send)
+            return
+
         body = b'{"detail":"Authentication required.","code":"auth_required"}'
         await send({
             "type": "http.response.start",
@@ -139,13 +156,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
 
     # Added last on purpose: Starlette applies the most recently added middleware
-    # outermost, so the auth gate protects every route (and CORS preflight).
-    basic_auth = os.environ.get("VCQA_BASIC_AUTH", "").strip()
-    if basic_auth:
-        app.add_middleware(SessionAuthMiddleware, credential=basic_auth)
+    # outermost, so the auth gate protects every route (and CORS preflight). It is
+    # inert in "open" mode and active once users exist or a credential is set, so
+    # account mode is protected even without VCQA_BASIC_AUTH.
+    app.add_middleware(SessionAuthMiddleware, services=services)
 
     @app.exception_handler(ValidationError)
     async def _validation_error(_: Request, exc: ValidationError) -> JSONResponse:
+        return JSONResponse(status_code=400, content={"detail": str(exc), "code": "validation_error"})
+
+    @app.exception_handler(PasswordPolicyError)
+    async def _password_policy(_: Request, exc: PasswordPolicyError) -> JSONResponse:
         return JSONResponse(status_code=400, content={"detail": str(exc), "code": "validation_error"})
 
     @app.exception_handler(AIError)

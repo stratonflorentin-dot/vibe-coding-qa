@@ -598,3 +598,125 @@ class Store:
 
     def delete_setting(self, key: str) -> None:
         self.db.execute("DELETE FROM app_settings WHERE key = ?", (key,))
+
+    # ------------------------------------------------------------------ users
+    def count_users(self) -> int:
+        row = self.db.query_one("SELECT COUNT(*) AS n FROM users")
+        return int(row["n"]) if row else 0
+
+    def count_active_owners(self, exclude_user_id: int | None = None) -> int:
+        if exclude_user_id is None:
+            row = self.db.query_one(
+                "SELECT COUNT(*) AS n FROM users WHERE role = 'owner' AND is_active = 1"
+            )
+        else:
+            row = self.db.query_one(
+                "SELECT COUNT(*) AS n FROM users WHERE role = 'owner' AND is_active = 1 AND id != ?",
+                (exclude_user_id,),
+            )
+        return int(row["n"]) if row else 0
+
+    def create_user(self, *, username: str, password_hash: str, role: str, is_active: bool = True) -> dict:
+        now = utcnow()
+        cursor = self.db.execute(
+            """
+            INSERT INTO users (username, password_hash, role, is_active, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (username, password_hash, role, 1 if is_active else 0, now, now),
+        )
+        return self.get_user(cursor.lastrowid)
+
+    def get_user(self, user_id: int) -> dict | None:
+        row = self.db.query_one("SELECT * FROM users WHERE id = ?", (user_id,))
+        return dict(row) if row else None
+
+    def get_user_by_username(self, username: str) -> dict | None:
+        row = self.db.query_one("SELECT * FROM users WHERE username = ? COLLATE NOCASE", (username,))
+        return dict(row) if row else None
+
+    def list_users(self) -> list[dict]:
+        rows = self.db.query(
+            """
+            SELECT id, username, role, is_active, created_at, updated_at, last_login_at
+            FROM users ORDER BY id
+            """
+        )
+        return [dict(row) for row in rows]
+
+    def update_user(self, user_id: int, **fields) -> dict | None:
+        allowed = {"username", "password_hash", "role", "is_active", "last_login_at"}
+        columns: list[str] = []
+        params: list[Any] = []
+        for key, value in fields.items():
+            if key not in allowed:
+                continue
+            columns.append(f"{key} = ?")
+            params.append(int(bool(value)) if key == "is_active" else value)
+        if not columns:
+            return self.get_user(user_id)
+        columns.append("updated_at = ?")
+        params.append(utcnow())
+        params.append(user_id)
+        self.db.execute(f"UPDATE users SET {', '.join(columns)} WHERE id = ?", tuple(params))
+        return self.get_user(user_id)
+
+    def delete_user(self, user_id: int) -> bool:
+        cursor = self.db.execute("DELETE FROM users WHERE id = ?", (user_id,))
+        return cursor.rowcount > 0
+
+    # --------------------------------------------------------------- sessions
+    def create_session(self, *, user_id: int, token_hash: str, expires_at: str, ip: str | None = None, user_agent: str | None = None) -> dict:
+        cursor = self.db.execute(
+            """
+            INSERT INTO user_sessions (user_id, token_hash, created_at, expires_at, ip, user_agent)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (user_id, token_hash, utcnow(), expires_at, ip, user_agent),
+        )
+        row = self.db.query_one("SELECT * FROM user_sessions WHERE id = ?", (cursor.lastrowid,))
+        return dict(row)
+
+    def get_session_with_user(self, token_hash: str) -> dict | None:
+        row = self.db.query_one(
+            """
+            SELECT s.id AS session_id, s.user_id, s.expires_at, s.revoked_at,
+                   u.username, u.role, u.is_active
+            FROM user_sessions s JOIN users u ON u.id = s.user_id
+            WHERE s.token_hash = ?
+            """,
+            (token_hash,),
+        )
+        return dict(row) if row else None
+
+    def revoke_session(self, token_hash: str) -> bool:
+        cursor = self.db.execute(
+            "UPDATE user_sessions SET revoked_at = ? WHERE token_hash = ? AND revoked_at IS NULL",
+            (utcnow(), token_hash),
+        )
+        return cursor.rowcount > 0
+
+    def revoke_user_sessions(self, user_id: int) -> int:
+        cursor = self.db.execute(
+            "UPDATE user_sessions SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL",
+            (utcnow(), user_id),
+        )
+        return cursor.rowcount
+
+    def purge_expired_sessions(self) -> int:
+        cursor = self.db.execute("DELETE FROM user_sessions WHERE expires_at < ?", (utcnow(),))
+        return cursor.rowcount
+
+    # ------------------------------------------------------------------ audit
+    def add_audit(self, *, action: str, user_id: int | None = None, username: str | None = None, target: str | None = None, detail: str | None = None, ip: str | None = None) -> None:
+        self.db.execute(
+            """
+            INSERT INTO audit_log (ts, user_id, username, action, target, detail, ip)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (utcnow(), user_id, username, action, target, detail, ip),
+        )
+
+    def list_audit(self, limit: int = 100) -> list[dict]:
+        rows = self.db.query("SELECT * FROM audit_log ORDER BY id DESC LIMIT ?", (int(limit),))
+        return [dict(row) for row in rows]
