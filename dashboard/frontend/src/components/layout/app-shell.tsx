@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from "react";
-import { Outlet } from "react-router-dom";
+import { Outlet, useLocation } from "react-router-dom";
 
+import { ErrorBoundary } from "@/components/common/error-boundary";
 import { AssistantLauncher } from "@/components/layout/assistant-launcher";
 import { SplashScreen } from "@/components/layout/splash-screen";
 import { Sidebar } from "@/components/layout/sidebar";
@@ -11,6 +12,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 /** The persistent frame: sidebar on the left, topbar above the routed content. */
 export function AppShell({ children }: { children?: ReactNode }) {
   const [mobileOpen, setMobileOpen] = useState(false);
+  const location = useLocation();
 
   return (
     <TooltipProvider delayDuration={200}>
@@ -31,7 +33,11 @@ export function AppShell({ children }: { children?: ReactNode }) {
         <div className="flex min-w-0 flex-1 flex-col">
           <Topbar onOpenMenu={() => setMobileOpen(true)} />
           <main className="flex-1 px-4 py-6 lg:px-8">
-            <div className="mx-auto w-full max-w-7xl space-y-6">{children ?? <Outlet />}</div>
+            <div className="mx-auto w-full max-w-7xl space-y-6">
+              {/* Per-route boundary: a page crash shows a fallback, not a blank app.
+                  Keyed by path so navigating away clears a previous error. */}
+              <ErrorBoundary key={location.pathname}>{children ?? <Outlet />}</ErrorBoundary>
+            </div>
           </main>
         </div>
         <AssistantLauncher />

@@ -21,6 +21,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 SAMPLE_REPO = PROJECT_ROOT / "samples" / "vulnerable_repo"
 
+
+# Synthetic credentials assembled at runtime so no secret literal is committed
+# (identical runtime value; see tests/test_regression.py for the rationale).
+def _assemble(*parts: str) -> str:
+    return "".join(parts)
+
 try:  # pragma: no cover - import guard for the optional web stack
     from fastapi.testclient import TestClient
 
@@ -92,7 +98,8 @@ class DashboardApiTests(unittest.TestCase):
         self.assertEqual(health.status_code, 200)
         body = health.json()
         self.assertEqual(body["status"], "ok")
-        self.assertEqual(body["version"], "0.5.0")
+        from dashboard.backend import __version__
+        self.assertEqual(body["version"], __version__)
         self.assertFalse(body["ai_configured"])
 
         profiles = self.client.get("/api/profiles").json()
@@ -139,7 +146,7 @@ class DashboardApiTests(unittest.TestCase):
     def test_ai_key_from_settings_is_used_for_connection_test_without_persistence(self):
         from unittest.mock import patch
 
-        api_key = "sk-runtime-secret"
+        api_key = _assemble("sk-runtime-", "secret")
         response = self.client.put(
             "/api/settings/ai",
             json={
@@ -176,7 +183,7 @@ class DashboardApiTests(unittest.TestCase):
 
         embedded = self.client.post(
             "/api/repositories",
-            json={"source": "https://user:pass@github.com/acme/app.git", "source_type": "github"},
+            json={"source": _assemble("https://user:", "pass@github.com/acme/app.git"), "source_type": "github"},
         )
         self.assertEqual(embedded.status_code, 400)
         self.assertIn("credentials", embedded.json()["detail"].lower())

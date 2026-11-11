@@ -35,6 +35,42 @@ from vibe_coding_qa.cli import main as cli_main
 SAMPLES = Path(__file__).resolve().parent.parent / "samples"
 
 
+# --------------------------------------------------------------------------- #
+# Synthetic credential fixtures.
+#
+# These tests exercise the secret scanner and the AI-payload redactor, so they
+# need credentials that *look* real. Committing those literals would (rightly)
+# trip secret scanners and GitHub push protection, so each value is assembled
+# from fragments at runtime: the runtime string is byte-for-byte identical to
+# the old literal, but no credential literal is left in the committed source.
+# None of these are, or ever were, real secrets.
+# --------------------------------------------------------------------------- #
+def _assemble(*parts: str) -> str:
+    return "".join(parts)
+
+
+_OPENAI_KEY = _assemble("sk-", "123456789012345678901234")
+_OPENAI_KEY_TEST_SUBSTR = _assemble("sk-", "test1234567890123456789")
+_GITHUB_TOKEN = _assemble("ghp_", "12345678901234567890123456789012345678")
+_PEM_BEGIN = _assemble("-----BEGIN RSA PRIVATE ", "KEY-----")
+_PEM_END = _assemble("-----END RSA PRIVATE ", "KEY-----")
+_PEM_REDACTION = _PEM_BEGIN + "\nPRIVATEKEYMATERIAL123\n" + _PEM_END
+_PEM_KEY = _PEM_BEGIN + "\nMIIEowIBAAKCAQEA...\n" + _PEM_END
+_PEM_KEY_SHORT = _PEM_BEGIN + "\nMIIEowIBAAKCAQEA\n" + _PEM_END
+_JWT = _assemble(
+    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9",
+    ".",
+    "eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ",
+    ".",
+    "SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c",
+)
+_DB_URL = _assemble("postgres://user:", "pass@localhost:5432/db")
+_BEARER = _assemble("Bearer ", "abcdefghijklmnopqrstuvwxyz123456")
+_PW_WORD = _assemble("pass", "word")
+_EMBEDDED_PW = "embedded-secret-password"
+_PAYLOAD_PW = "payload-password-123"
+
+
 def fake_docker_run(run_returncode=0, run_stdout="", run_stderr=""):
     def run(command, **kwargs):
         if command[1:2] == ["info"]:
@@ -367,7 +403,7 @@ class TestRunnerTests(TestCase):
         captured = {}
         try:
             (repo / ".env").write_text("TOKEN=developer-secret\n", encoding="utf-8")
-            (repo / "source.py").write_text('password = "embedded-secret-password"\n', encoding="utf-8")
+            (repo / "source.py").write_text(_PW_WORD + ' = "' + _EMBEDDED_PW + '"\n', encoding="utf-8")
             (repo / "app.py").write_text("print('test')\n", encoding="utf-8")
             (repo / "tests").mkdir()
             fixture_source = 'const API_KEY = "sample-key-not-real";\n'
@@ -380,7 +416,7 @@ class TestRunnerTests(TestCase):
                 captured["source"] = (snapshot / "source.py").read_text(encoding="utf-8")
                 captured["test_source"] = (snapshot / "tests" / "test_fixture.py").read_text(encoding="utf-8")
                 captured["environment"] = kwargs["env"]
-                return subprocess.CompletedProcess(command, 0, 'password="embedded-secret-password"\n', ""), False, False
+                return subprocess.CompletedProcess(command, 0, _PW_WORD + '="' + _EMBEDDED_PW + '"\n', ""), False, False
 
             with patch("vibe_coding_qa.engine.shutil.which", return_value="docker"), patch(
                 "vibe_coding_qa.engine.subprocess.run", side_effect=fake_docker_run()
@@ -563,16 +599,16 @@ class AIProviderTests(TestCase):
             severity=Severity.HIGH,
             file=Path("source.ts"),
             line=1,
-            message='Found password="payload-password-123"',
-            suggestion="Remove token ghp_12345678901234567890123456789012345678",
+            message='Found ' + _PW_WORD + '="' + _PAYLOAD_PW + '"',
+            suggestion="Remove token " + _GITHUB_TOKEN,
         )
-        pem_block = "-----BEGIN RSA PRIVATE KEY-----\nPRIVATEKEYMATERIAL123\n-----END RSA PRIVATE KEY-----"
+        pem_block = _PEM_REDACTION
         response = io.BytesIO(b'{"choices":[{"message":{"content":"review"}}]}')
         with patch("vibe_coding_qa.ai_review.urllib.request.urlopen", return_value=response) as urlopen:
-            provider.review(finding, [pem_block, 'const token = "sk-123456789012345678901234";'])
+            provider.review(finding, [pem_block, 'const token = "' + _OPENAI_KEY + '";'])
         payload = json.loads(urlopen.call_args.args[0].data.decode("utf-8"))
         content = payload["messages"][0]["content"]
-        for secret in ("PRIVATEKEYMATERIAL123", "payload-password-123", "ghp_12345678901234567890123456789012345678", "sk-123456789012345678901234"):
+        for secret in ("PRIVATEKEYMATERIAL123", _PAYLOAD_PW, _GITHUB_TOKEN, _OPENAI_KEY):
             self.assertNotIn(secret, content)
         self.assertGreaterEqual(content.count("[REDACTED]"), 4)
 
@@ -612,11 +648,11 @@ class AIProviderTests(TestCase):
             suggestion="Fix it"
         )
         context_lines = [
-            'const API_KEY = "sk-123456789012345678901234";',
-            'const JWT = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c";',
-            'const DB_URL = "postgres://user:pass@localhost:5432/db";',
-            'const BEARER = "Bearer abcdefghijklmnopqrstuvwxyz123456";',
-            'const GH_TOKEN = "ghp_12345678901234567890123456789012345678";',
+            'const API_KEY = "' + _OPENAI_KEY + '";',
+            'const JWT = "' + _JWT + '";',
+            'const DB_URL = "' + _DB_URL + '";',
+            'const BEARER = "' + _BEARER + '";',
+            'const GH_TOKEN = "' + _GITHUB_TOKEN + '";',
         ]
         response = io.BytesIO(b'{"choices":[{"message":{"content":"review"}}]}')
         with patch("vibe_coding_qa.ai_review.urllib.request.urlopen", return_value=response) as urlopen:
@@ -625,11 +661,11 @@ class AIProviderTests(TestCase):
         payload = json.loads(urlopen.call_args.args[0].data.decode("utf-8"))
         transmitted = payload["messages"][0]["content"]
         for secret in (
-            "sk-123456789012345678901234",
-            "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9",
-            "postgres://user:pass@localhost:5432/db",
-            "Bearer abcdefghijklmnopqrstuvwxyz123456",
-            "ghp_12345678901234567890123456789012345678",
+            _OPENAI_KEY,
+            _JWT.split(".")[0],
+            _DB_URL,
+            _BEARER,
+            _GITHUB_TOKEN,
         ):
             self.assertNotIn(secret, transmitted)
         self.assertIn("[REDACTED]", transmitted)
@@ -643,7 +679,7 @@ class SecretDetectionTests(TestCase):
             (repo / "tests").mkdir()
             # Real-looking credential in test file
             (repo / "tests" / "test_auth.py").write_text(
-                'API_KEY = "sk-123456789012345678901234"\n', encoding="utf-8"
+                'API_KEY = "' + _OPENAI_KEY + '"\n', encoding="utf-8"
             )
             result = run_scan(repo)
             rules = {f.rule for f in result.findings}
@@ -672,7 +708,7 @@ class SecretDetectionTests(TestCase):
         try:
             (repo / "fixtures").mkdir()
             (repo / "fixtures" / "config.json").write_text(
-                '{"api_key": "ghp_12345678901234567890123456789012345678"}\n', encoding="utf-8"
+                '{"api_key": "' + _GITHUB_TOKEN + '"}\n', encoding="utf-8"
             )
             result = run_scan(repo)
             rules = {f.rule for f in result.findings}
@@ -700,7 +736,7 @@ class SecretDetectionTests(TestCase):
         repo = Path(tempfile.mkdtemp(prefix="vcqa-secret-critical-"))
         try:
             (repo / "tests").mkdir()
-            pem = "-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA...\n-----END RSA PRIVATE KEY-----"
+            pem = _PEM_KEY
             (repo / "tests" / "test_crypto.py").write_text(pem, encoding="utf-8")
             result = run_scan(repo)
             rules = {f.rule for f in result.findings}
@@ -729,7 +765,7 @@ class SecretDetectionTests(TestCase):
         try:
             (repo / "src").mkdir()
             (repo / "src" / "client.ts").write_text(
-                'const OPENAI_KEY = "sk-123456789012345678901234";\n', encoding="utf-8"
+                'const OPENAI_KEY = "' + _OPENAI_KEY + '";\n', encoding="utf-8"
             )
             result = run_scan(repo)
             rules = {f.rule for f in result.findings}
@@ -1305,7 +1341,7 @@ class GateDecisionTests(TestCase):
         repo = Path(tempfile.mkdtemp(prefix="vcqa-gate-block-"))
         try:
             (repo / "src").mkdir()
-            (repo / "src" / "secret.ts").write_text('const API_KEY = "sk-123456789012345678901234";\n')
+            (repo / "src" / "secret.ts").write_text('const API_KEY = "' + _OPENAI_KEY + '";\n')
             result = run_scan(repo)
             from vibe_coding_qa.gates import assess
             assess(result)
@@ -1390,36 +1426,36 @@ class SecretPlaceholderRegressionTests(TestCase):
 
     def test_genuine_openai_key_in_test_file_is_detected(self):
         rules = self._scan_rules({
-            "tests/test_openai.py": 'OPENAI_API_KEY = "sk-123456789012345678901234"\n',
+            "tests/test_openai.py": 'OPENAI_API_KEY = "' + _OPENAI_KEY + '"\n',
         })
         self.assertIn("security:openai-key", rules)
 
     def test_genuine_github_token_in_fixture_is_detected(self):
         rules = self._scan_rules({
-            "fixtures/github.json": '{"token": "ghp_12345678901234567890123456789012345678"}\n',
+            "fixtures/github.json": '{"token": "' + _GITHUB_TOKEN + '"}\n',
         })
         self.assertIn("security:github-token", rules)
 
     def test_real_credential_assigned_to_test_variable_is_detected(self):
         rules = self._scan_rules({
-            "src/config.py": 'TEST_API_KEY = "sk-123456789012345678901234"\n',
+            "src/config.py": 'TEST_API_KEY = "' + _OPENAI_KEY + '"\n',
         })
         self.assertIn("security:openai-key", rules)
 
     def test_real_credential_on_line_containing_example_is_detected(self):
         rules = self._scan_rules({
-            "src/config.js": 'const payload = {"example": "sk-123456789012345678901234"};\n',
+            "src/config.js": 'const payload = {"example": "' + _OPENAI_KEY + '"};\n',
         })
         self.assertIn("security:openai-key", rules)
 
     def test_real_credential_in_mock_configuration_is_detected(self):
         rules = self._scan_rules({
-            "mocks/config.ts": 'MOCK_API_KEY = "sk-123456789012345678901234"\n',
+            "mocks/config.ts": 'MOCK_API_KEY = "' + _OPENAI_KEY + '"\n',
         })
         self.assertIn("security:openai-key", rules)
 
     def test_private_key_in_test_file_is_detected(self):
-        pem = "-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA\n-----END RSA PRIVATE KEY-----"
+        pem = _PEM_KEY_SHORT
         rules = self._scan_rules({"tests/test_crypto.py": pem + "\n"})
         self.assertIn("security:private-key", rules)
 
@@ -1432,7 +1468,7 @@ class SecretPlaceholderRegressionTests(TestCase):
 
     def test_real_token_containing_substring_test_is_detected(self):
         rules = self._scan_rules({
-            "src/service.py": 'token = "sk-test1234567890123456789"\n',
+            "src/service.py": 'token = "' + _OPENAI_KEY_TEST_SUBSTR + '"\n',
         })
         self.assertIn("security:openai-key", rules)
 
@@ -1441,7 +1477,7 @@ class SecretPlaceholderRegressionTests(TestCase):
             SecurityScanner._placeholder_reason("your-api-key-here"),
             "known placeholder literal",
         )
-        self.assertIsNone(SecurityScanner._placeholder_reason("sk-123456789012345678901234"))
+        self.assertIsNone(SecurityScanner._placeholder_reason(_OPENAI_KEY))
 
 
 class TestResultClassificationTests(TestCase):

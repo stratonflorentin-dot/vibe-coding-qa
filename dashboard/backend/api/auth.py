@@ -19,6 +19,16 @@ from ..sessions import COOKIE_NAME, SESSION_TTL, auth_credential, make_token, va
 router = APIRouter(tags=["auth"])
 
 
+def _request_is_https(request: Request) -> bool:
+    """True when the browser reached us over HTTPS.
+
+    The Cloudflare tunnel terminates TLS and forwards over http, so trust the
+    ``X-Forwarded-Proto`` it sets; a direct localhost request is plain http.
+    """
+    forwarded = request.headers.get("x-forwarded-proto", "").split(",")[0].strip().lower()
+    return forwarded == "https" or request.url.scheme == "https"
+
+
 @router.get("/api/auth/status", response_model=AuthStatusOut)
 def auth_status(request: Request) -> dict:
     credential = auth_credential()
@@ -31,7 +41,7 @@ def auth_status(request: Request) -> dict:
 
 
 @router.post("/api/auth/login", response_model=AuthStatusOut)
-def login(payload: LoginIn, response: Response) -> dict:
+def login(payload: LoginIn, request: Request, response: Response) -> dict:
     credential = auth_credential()
     if not credential:
         return {"auth_required": False, "authenticated": True}
@@ -39,20 +49,15 @@ def login(payload: LoginIn, response: Response) -> dict:
     if not hmac.compare_digest(supplied, credential.encode("utf-8")):
         response.status_code = 401
         return {"auth_required": True, "authenticated": False}
-    # Not marked Secure: the tunnel terminates TLS at Cloudflare and reaches the
-    # backend over http, and the cookie must also work on plain-http localhost.
-    response.set_cookie(
-        COOKIE_NAME,
-        make_token(credential),
-        max_age=SESSION_TTL,
-        httponly=True,
-        samesite="lax",
-        path="/",
-    )
+    # HttpOnly always; SameSite=Lax; Secure only when actually served over HTTPS
+    # (the tunnel) so the cookie still works on plain-http localhost.
+    secure = _request_is_https(request)
+    response.set_cookie(COOKIE_NAME, make_token(credential), max_age=SESSION_TTL, httponly=True, samesite="lax", secure=secure, path="/")
     return {"auth_required": True, "authenticated": True}
 
 
 @router.post("/api/auth/logout", response_model=AuthStatusOut)
-def logout(response: Response) -> dict:
-    response.delete_cookie(COOKIE_NAME, path="/")
+def logout(request: Request, response: Response) -> dict:
+    secure = _request_is_https(request)
+    response.delete_cookie(COOKIE_NAME, path="/", httponly=True, samesite="lax", secure=secure)
     return {"auth_required": bool(auth_credential()), "authenticated": False}

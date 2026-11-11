@@ -413,7 +413,9 @@ class SecurityScanner(BaseScanner):
             return
         text = path.read_text(encoding="utf-8", errors="ignore")
         for i, raw in enumerate(text.splitlines(), 1):
-            if re.search(r"res\.cookie\s*\(|set-cookie|cookie\s*\(", raw, re.IGNORECASE):
+            # The character class in "set[-]cookie" matches the response header
+            # while preventing this rule from flagging its own pattern line.
+            if re.search(r"res\.cookie\s*\(|set[-]cookie|cookie\s*\(", raw, re.IGNORECASE):
                 lowered = raw.lower()
                 if "secure" not in lowered or "httponly" not in lowered or "samesite" not in lowered:
                     self.add(

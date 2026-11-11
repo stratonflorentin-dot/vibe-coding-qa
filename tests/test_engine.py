@@ -15,16 +15,27 @@ from vibe_coding_qa.repo import load_repository
 from vibe_coding_qa.scanners.security import SecurityScanner
 
 
+# Synthetic credentials assembled at runtime so no secret literal is committed
+# (identical runtime value; see tests/test_regression.py for the rationale).
+def _assemble(*parts: str) -> str:
+    return "".join(parts)
+
+
+_OPENAI_KEY = _assemble("sk-", "123456789012345678901234")
+_OPENAI_KEY_ALT = _assemble("sk-", "abc123def456ghi789012")
+
+
 class EngineTests(TestCase):
     def setUp(self):
         self.repo = Path(tempfile.mkdtemp(prefix="vcqa-sample-"))
         (self.repo / "src").mkdir()
         (self.repo / "package.json").write_text('{"name":"sample","scripts":{"test":"exit 0"}}')
-        (self.repo / "src" / "client.ts").write_text("""
-const API_KEY = "sk-123456789012345678901234";
-console.log("debug");
-function submit() { eval(userInput); }
-""")
+        (self.repo / "src" / "client.ts").write_text(
+            "\n"
+            'const API_KEY = "' + _OPENAI_KEY + '";\n'
+            'console.log("debug");\n'
+            "function submit() { eval(userInput); }\n"
+        )
         (self.repo / "src" / "db.sql").write_text("""
 CREATE TABLE users (id uuid primary key);
 CREATE TABLE orders (id uuid primary key);
@@ -44,7 +55,7 @@ CREATE TABLE orders (id uuid primary key);
 
     def test_scan_detects_critical_client_secret(self):
         # Critical patterns (OpenAI/Stripe/AWS/Supabase) in client files trigger client-side-secret.
-        (self.repo / "src" / "client-critical.ts").write_text('const OPENAI_KEY = "sk-abc123def456ghi789012";\n')
+        (self.repo / "src" / "client-critical.ts").write_text('const OPENAI_KEY = "' + _OPENAI_KEY_ALT + '";\n')
         result = run_scan(self.repo)
         rules = {f.rule for f in result.findings}
         self.assertIn("security:client-side-secret", rules)

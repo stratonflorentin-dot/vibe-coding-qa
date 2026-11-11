@@ -1,5 +1,30 @@
+# Vibe Coding QA — paths excluded from this project's own source-quality scan.
+# These are NOT project source: build artifacts, packaging metadata, generated
+# tool output, the dashboard's runtime data (cloned third-party repos + DB), and
+# sample/vulnerable fixtures. Real source (vibe_coding_qa/, dashboard/backend/,
+# dashboard/frontend/src/, tests/) stays in scope. Mirrors .gitignore.
+
+# Deliberately vulnerable fixtures and prior report bundles
 samples/
 vcqa-reports-engine/
 vcqa-reports-final/
 vcqa-reports-vuln/
+vcqa-reports/
 phone-mascots.gif
+
+# Dashboard runtime data: cloned/registered third-party repos and the SQLite DB
+dashboard/data/
+
+# Python packaging + build artifacts (generated)
+build/
+dist/
+vibe_coding_qa.egg-info/
+
+# Built single-page frontend bundle (generated from dashboard/frontend/src)
+dashboard/frontend/dist/
+
+# graphify knowledge-graph output (generated)
+graphify-out/
+
+# Accidental literal-path folder created by a shell variable expansion
+%SystemDrive%/
