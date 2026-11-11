@@ -16,7 +16,10 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import urlsplit
 
-import httpx
+try:
+    import httpx
+except ImportError:  # pragma: no cover - optional web stack
+    httpx = None  # type: ignore[assignment]
 
 from vibe_coding_qa.scanners import net_guard
 from vibe_coding_qa.scanners.web import HttpFetcher, WebScanLimits
@@ -263,6 +266,8 @@ class SecurityLabService:
         }
 
     def _worker_request(self, worker: dict, method: str, path: str, payload: dict | None = None) -> dict:
+        if httpx is None:
+            raise RuntimeError("httpx is required to communicate with security workers.")
         if not worker.get("enabled") or not worker.get("token"):
             raise ValidationError("Security worker is disabled or revoked.")
         base_url = _validate_worker_placement(worker["base_url"], worker["placement"])

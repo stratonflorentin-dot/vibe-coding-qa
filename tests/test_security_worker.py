@@ -16,6 +16,11 @@ from unittest.mock import patch
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
+try:
+    import httpx
+except ImportError:
+    httpx = None
+
 from dashboard.backend.persistence.database import Database
 from dashboard.backend.persistence.store import Store
 from dashboard.backend.security import ValidationError
@@ -313,6 +318,7 @@ class SecurityStoreTests(unittest.TestCase):
         self.assertIsNone(revoked["token"])
         service.shutdown()
 
+    @unittest.skipIf(httpx is None, "httpx is not installed")
     def test_worker_dns_is_revalidated_before_each_request(self):
         service = SecurityLabService(self.store)
         with patch(

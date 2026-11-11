@@ -59,6 +59,7 @@ class DashboardApiTests(unittest.TestCase):
         self._env = dict(os.environ)
         self._tmp = tempfile.TemporaryDirectory()
         os.environ["VCQA_DASHBOARD_DB"] = str(Path(self._tmp.name) / "vcqa.sqlite3")
+        os.environ.pop("VCQA_BASIC_AUTH", None)
         os.environ.pop("VCQA_AI_API_KEY", None)
         os.environ.pop("VCQA_AI_PROVIDER", None)
         os.environ["VCQA_MAX_CONCURRENT_SCANS"] = "2"
