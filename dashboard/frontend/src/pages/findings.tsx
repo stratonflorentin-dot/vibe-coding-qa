@@ -1,12 +1,12 @@
-import { ChevronDown, ExternalLink, Search, ShieldAlert } from "lucide-react";
+import { ChevronDown, Search, ShieldAlert } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { useSearchParams } from "react-router-dom";
 
 import { useApp } from "@/app/app-context";
 import { DataState } from "@/components/common/data-state";
 import { PageHeader } from "@/components/common/page-header";
-import { FindingStatusBadge } from "@/components/common/status-badge";
 import { SeverityBadge } from "@/components/common/severity-badge";
+import { VibeFixCard } from "@/components/findings/vibe-fix-card";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -166,6 +166,11 @@ export function FindingsPage() {
     ? groups.filter((group) => group.representative.severity === selectedSeverity)
     : [];
   const visibleGroups = selectedGroups.slice(0, visibleCount);
+
+  async function handleStatusUpdate(findingId: number, newStatus: Finding["status"]) {
+    await api.findings.setStatus(findingId, newStatus);
+    await result.reload(true);
+  }
 
   return (
     <div className="space-y-6">
@@ -357,52 +362,11 @@ export function FindingsPage() {
                             <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-180" />
                           </summary>
 
-                          <div className="space-y-3 border-t px-3 py-3 sm:px-4">
-                            <p className="whitespace-pre-wrap text-sm leading-relaxed">
-                              {finding.message || "No description was recorded."}
-                            </p>
-                            {finding.suggestion ? (
-                              <div className="rounded-md bg-muted/60 px-3 py-2">
-                                <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                                  Suggested next step
-                                </p>
-                                <p className="text-sm">{finding.suggestion}</p>
-                              </div>
-                            ) : null}
-                            <div className="flex flex-wrap items-center justify-between gap-2">
-                              <p className="text-xs text-muted-foreground">
-                                {formatCount(group.occurrences.length)} occurrences across{" "}
-                                {formatCount(fileCount)} files
-                              </p>
-                              <Link
-                                to={`/findings/${group.occurrences[0].id}`}
-                                className="inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline"
-                              >
-                                Open finding details <ExternalLink className="h-3 w-3" />
-                              </Link>
-                            </div>
-                            <details className="border-t pt-2">
-                              <summary className="cursor-pointer text-xs font-medium text-muted-foreground hover:text-foreground">
-                                View affected locations
-                              </summary>
-                              <ul className="mt-2 grid max-h-52 gap-1.5 overflow-auto sm:grid-cols-2">
-                                {group.occurrences.map((item) => (
-                                  <li
-                                    key={item.id}
-                                    className="flex min-w-0 flex-wrap items-center gap-2 rounded bg-background px-2.5 py-2 text-xs"
-                                  >
-                                    <Link
-                                      to={`/findings/${item.id}`}
-                                      className="min-w-0 flex-1 break-all font-mono text-primary hover:underline"
-                                    >
-                                      {item.repository_name}: {item.file}:{item.line}
-                                    </Link>
-                                    <FindingStatusBadge status={item.status} />
-                                  </li>
-                                ))}
-                              </ul>
-                            </details>
-                          </div>
+                          <VibeFixCard
+                            finding={finding}
+                            occurrences={group.occurrences}
+                            onStatusChange={handleStatusUpdate}
+                          />
                         </details>
                       );
                     })}
