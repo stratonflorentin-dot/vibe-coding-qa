@@ -18,6 +18,7 @@ import { ScanComparePage, ScanDetailPage } from "@/pages/scan-detail";
 import { ScansPage } from "@/pages/scans";
 import { SecurityLabPage } from "@/pages/security-lab";
 import { SettingsPage } from "@/pages/settings";
+import { TeamPage } from "@/pages/team";
 
 export function App() {
   return (
@@ -41,6 +42,7 @@ export function App() {
             <Route path="/remediations" element={<RemediationsPage />} />
             <Route path="/reports" element={<ReportsPage />} />
             <Route path="/settings" element={<SettingsPage />} />
+            <Route path="/team" element={<TeamPage />} />
             <Route path="/index.html" element={<Navigate to="/" replace />} />
             <Route path="*" element={<NotFoundPage />} />
           </Route>

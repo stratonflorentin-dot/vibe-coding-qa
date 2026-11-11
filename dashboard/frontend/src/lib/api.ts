@@ -382,16 +382,59 @@ export const security = {
 };
 
 // --------------------------------------------------------------------- auth
+export type AuthRole = "owner" | "administrator" | "security_analyst" | "viewer";
+export type AuthMode = "open" | "credential" | "accounts";
+
+export interface AuthUser {
+  id: number;
+  username: string;
+  role: AuthRole;
+  is_active: boolean;
+  created_at?: string | null;
+  last_login_at?: string | null;
+}
+
 export interface AuthStatus {
   auth_required: boolean;
   authenticated: boolean;
+  mode?: AuthMode;
+  needs_setup?: boolean;
+  user?: AuthUser | null;
+}
+
+export interface AuditEntry {
+  id: number;
+  ts: string;
+  username: string | null;
+  action: string;
+  target: string | null;
+  detail: string | null;
+  ip: string | null;
 }
 
 export const auth = {
   status: () => request<AuthStatus>("/api/auth/status"),
+  me: () => request<AuthStatus>("/api/auth/me"),
   login: (payload: { username: string; password: string }) =>
     request<AuthStatus>("/api/auth/login", json("POST", payload)),
   logout: () => request<AuthStatus>("/api/auth/logout", { method: "POST" }),
+  setup: (payload: { username: string; password: string }) =>
+    request<AuthStatus & { user: AuthUser }>("/api/auth/setup", json("POST", payload)),
+  users: {
+    list: () => request<{ users: AuthUser[] }>("/api/auth/users"),
+    create: (payload: { username: string; password: string; role: AuthRole }) =>
+      request<{ user: AuthUser }>("/api/auth/users", json("POST", payload)),
+    setRole: (id: number, role: AuthRole) =>
+      request<{ user: AuthUser }>(`/api/auth/users/${id}/role`, json("PATCH", { role })),
+    setActive: (id: number, is_active: boolean) =>
+      request<{ user: AuthUser }>(`/api/auth/users/${id}/active`, json("PATCH", { is_active })),
+    setPassword: (id: number, password: string) =>
+      request<{ user: AuthUser }>(`/api/auth/users/${id}/password`, json("PATCH", { password })),
+    remove: (id: number) =>
+      request<{ detail: string }>(`/api/auth/users/${id}`, { method: "DELETE" }),
+  },
+  audit: (limit = 100) =>
+    request<{ entries: AuditEntry[] }>(`/api/auth/audit${buildQuery({ limit })}`),
 };
 
 export const api = {
