@@ -54,7 +54,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
       <div className="flex h-14 items-center justify-between border-b border-sidebar-border px-4">
         <div className="flex items-center gap-2.5 min-w-0">
           <span className="vcqa-logo-badge shrink-0" aria-hidden="true">
-            <img src="/phone-mascots.gif" alt="" draggable={false} className="h-6 w-6 object-contain" />
+            <img src="/pet-badge.svg" alt="" draggable={false} className="h-6 w-6 object-contain" />
           </span>
           <div className="min-w-0">
             <div className="flex items-center gap-1.5">

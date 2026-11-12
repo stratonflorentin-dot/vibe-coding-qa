@@ -39,7 +39,7 @@ export function LoginScreen({ onAuthenticated }: { onAuthenticated: () => void }
     <div className="vcqa-login">
       <form className="vcqa-login-card" onSubmit={submit}>
         <span className="vcqa-login-badge" aria-hidden="true">
-          <img src="/phone-mascots.gif" alt="" draggable={false} />
+          <img src="/pet-badge.svg" alt="" draggable={false} />
         </span>
         <h1 className="vcqa-login-title">Vibe Coding QA</h1>
         <p className="vcqa-login-sub">Sign in to your dashboard</p>

@@ -125,7 +125,7 @@ export function AssistantLauncher() {
       onClick={onClick}
     >
       <span className="assistant-launcher-mascots">
-        <img src="/phone-mascots.gif" alt="" aria-hidden="true" draggable={false} />
+        <img src="/pet-badge.svg" alt="" aria-hidden="true" draggable={false} />
       </span>
       <span className="assistant-launcher-copy">
         <span className="assistant-launcher-eyebrow">Need a hand?</span>

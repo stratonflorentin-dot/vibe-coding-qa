@@ -107,7 +107,7 @@ export function SplashScreen() {
       <div className="vcqa-splash-stage">
         <div className="vcqa-splash-rings" aria-hidden="true" />
         <div className="vcqa-splash-badge">
-          <img src="/phone-mascots.gif" alt="" aria-hidden="true" draggable={false} />
+          <img src="/pet-badge.svg" alt="" aria-hidden="true" draggable={false} />
           <span className="vcqa-splash-glint" aria-hidden="true" />
         </div>
       </div>
