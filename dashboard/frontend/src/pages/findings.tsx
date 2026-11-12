@@ -1,4 +1,4 @@
-import { ChevronDown, Search, ShieldAlert } from "lucide-react";
+import { ChevronDown, Search, ShieldAlert, Wand2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 
@@ -15,7 +15,9 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useAsync } from "@/hooks/use-async";
 import { useDebounced } from "@/hooks/use-debounced";
+import { useToast } from "@/components/ui/toast";
 import { api } from "@/lib/api";
+import { buildFixAllPrompt } from "@/lib/fix-all-prompt";
 import { groupIssues } from "@/lib/finding-groups";
 import { formatCount, titleCase } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -58,6 +60,7 @@ const PRIORITY_STYLES = {
 
 export function FindingsPage() {
   const { activeRepositoryId, repositories } = useApp();
+  const { toast } = useToast();
   const [searchParams, setSearchParams] = useSearchParams();
   const [repositoryId, setRepositoryId] = useState("active");
   const [module, setModule] = useState("all");
@@ -172,11 +175,44 @@ export function FindingsPage() {
     await result.reload(true);
   }
 
+  async function copyFixAllPrompt() {
+    const prompt = buildFixAllPrompt(groups, {
+      scanId,
+      repoName: findings[0]?.repository_name ?? undefined,
+    });
+    try {
+      await navigator.clipboard.writeText(prompt);
+      toast({
+        title: "Fix-all prompt copied",
+        description: `${groups.length} unique issues across every category. Paste it into your AI coding agent.`,
+        variant: "success",
+      });
+    } catch {
+      toast({
+        title: "Could not copy",
+        description: "Clipboard access was blocked by the browser.",
+        variant: "error",
+      });
+    }
+  }
+
   return (
     <div className="space-y-6">
       <PageHeader
         title="Findings"
         description="Choose a severity to review its highest-priority unique issues. Repeated findings are grouped with every affected location."
+        actions={
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={copyFixAllPrompt}
+            disabled={result.loading || groups.length === 0}
+            title="Copy one AI prompt that covers every issue in every category"
+          >
+            <Wand2 className="mr-1.5 h-4 w-4" />
+            Copy fix-all prompt
+          </Button>
+        }
       />
 
       {scanId !== undefined ? (
