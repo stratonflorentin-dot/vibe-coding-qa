@@ -12,7 +12,11 @@ import { cn } from "@/lib/utils";
  */
 export function Markdown({ text, className }: { text: string; className?: string }) {
   if (!text.trim()) return null;
-  return <div className={cn("space-y-3 text-sm leading-relaxed", className)}>{parse(text)}</div>;
+  return (
+    <div className={cn("min-w-0 space-y-3 break-words text-sm leading-relaxed", className)}>
+      {parse(text)}
+    </div>
+  );
 }
 
 function inline(source: string, keyPrefix: string): ReactNode[] {
@@ -84,7 +88,7 @@ function parse(text: string): ReactNode[] {
         blocks.push(
           <pre
             key={`pre-${key++}`}
-            className="overflow-x-auto rounded-md border bg-muted/50 p-3 font-mono text-xs"
+            className="max-w-full overflow-x-auto rounded-md border bg-muted/50 p-3 font-mono text-xs"
           >
             <code>{codeBuffer.join("\n")}</code>
           </pre>,
@@ -140,7 +144,7 @@ function parse(text: string): ReactNode[] {
 
   if (codeBuffer) {
     blocks.push(
-      <pre key={`pre-${key++}`} className="overflow-x-auto rounded-md border bg-muted/50 p-3 font-mono text-xs">
+      <pre key={`pre-${key++}`} className="max-w-full overflow-x-auto rounded-md border bg-muted/50 p-3 font-mono text-xs">
         <code>{codeBuffer.join("\n")}</code>
       </pre>,
     );

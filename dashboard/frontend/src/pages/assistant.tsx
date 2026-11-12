@@ -181,7 +181,7 @@ export function AssistantPage() {
         </p>
       )}
 
-      <div className="grid gap-4 lg:grid-cols-[300px_1fr]">
+      <div className="grid gap-4 lg:grid-cols-[300px_minmax(0,1fr)]">
         <Card className="flex flex-col">
           <CardHeader className="flex-row items-center justify-between space-y-0 pb-3">
             <CardTitle>Conversations</CardTitle>
@@ -400,7 +400,7 @@ function MessageRow({
     <div className={cn("flex", isAssistant ? "justify-start" : "justify-end")}>
       <div
         className={cn(
-          "max-w-[85%] rounded-lg border px-3 py-2",
+          "min-w-0 max-w-[85%] rounded-lg border px-3 py-2",
           isAssistant ? "bg-card" : "bg-primary/10",
         )}
       >
@@ -408,7 +408,7 @@ function MessageRow({
           {isAssistant ? "Assistant" : "You"}
         </p>
         {isAssistant ? (
-          <Markdown text={message.content} />
+          <Markdown text={message.content} className="min-w-0 max-w-full" />
         ) : (
           <p className="whitespace-pre-wrap text-sm">{message.content}</p>
         )}
