@@ -13,6 +13,7 @@ import type {
   AIConversationDetail,
   AIConnectionTest,
   AIReviewResponse,
+  IntelligenceTask,
   AISettings,
   AISettingsIn,
   Architecture,
@@ -292,6 +293,10 @@ export const ai = {
     request<ThreatModelResponse>("/api/ai/threat-model", json("POST", { repository_id: repositoryId })),
 };
 
+export const intelligence = {
+  task: (id: number) => request<IntelligenceTask>(`/api/intelligence/tasks/${id}`),
+};
+
 // --------------------------------------------------------------------- intel
 export const intel = {
   architecture: (repositoryId: number) =>
@@ -445,6 +450,7 @@ export const api = {
   findings,
   dashboard,
   ai,
+  intelligence,
   intel,
   security,
 };

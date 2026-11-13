@@ -244,6 +244,15 @@ class AIChatResponse(BaseModel):
     message: AIMessageOut
     configured: bool
     sources: list[dict[str, Any]] = Field(default_factory=list)
+    task_id: int | None = None
+    confidence: str | None = None
+    limitations: list[str] = Field(default_factory=list)
+    status: str | None = None
+    execution: str | None = None
+    provider: str | None = None
+    model: str | None = None
+    latency_ms: int | None = None
+    fallback_used: bool = False
 
 
 class AIConversationOut(BaseModel):
@@ -266,6 +275,13 @@ class AIReviewOut(BaseModel):
     model: str | None = None
     error: str | None = None
     content: dict[str, Any] = Field(default_factory=dict)
+    task_id: int | None = None
+    confidence: str | None = None
+    evidence: list[dict[str, Any]] = Field(default_factory=list)
+    limitations: list[str] = Field(default_factory=list)
+    status: str | None = None
+    execution: str | None = None
+    latency_ms: int | None = None
 
 
 class RemediationProposeRequest(BaseModel):

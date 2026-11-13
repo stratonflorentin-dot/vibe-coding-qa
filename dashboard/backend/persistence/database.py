@@ -408,6 +408,23 @@ MIGRATIONS: list[tuple[int, list[str]]] = [
             "CREATE INDEX idx_model_exec_task ON model_executions(task_id)",
         ],
     ),
+    (
+        6,
+        [
+            """
+            CREATE TABLE intelligence_tool_calls (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                task_id INTEGER REFERENCES intelligence_tasks(id) ON DELETE CASCADE,
+                user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                tool_name TEXT NOT NULL,
+                argument_names TEXT NOT NULL,
+                status TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )
+            """,
+            "CREATE INDEX idx_intel_tool_calls_task ON intelligence_tool_calls(task_id, id)",
+        ],
+    ),
 ]
 
 

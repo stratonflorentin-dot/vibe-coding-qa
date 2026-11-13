@@ -30,6 +30,7 @@ from .exceptions import IntelligenceError, InvalidTaskError, ProjectNotFoundErro
 from .handlers import HANDLERS, HandlerContext, HandlerOutput
 from .model_registry import ModelRegistry
 from .router import RouteDecision, Router
+from .tool_broker import ToolBroker
 
 
 class IntelligenceGateway:
@@ -40,6 +41,7 @@ class IntelligenceGateway:
         self.registry = ModelRegistry(ai_service.config)
         self.router = Router(self.registry)
         self.context = ContextEngine(store)
+        self.tools = ToolBroker(store, ai_service)
 
     # ----------------------------------------------------------------- public
     def execute(self, request: IntelligenceRequest, *, user: dict) -> IntelligenceResult:
@@ -59,13 +61,17 @@ class IntelligenceGateway:
             prepared = self.context.prepare(request, repository) if repository else PreparedContext()
             decision = self.router.route(operation)
             if not decision.available:
+                latency = int((time.monotonic() - started) * 1000)
+                self.store.record_model_execution(task_id=task_id, provider_id=None, model_id=None,
+                    execution_status=TaskStatus.UNAVAILABLE.value, latency_ms=latency, fallback_used=False)
                 self.store.complete_intelligence_task(task_id, status=TaskStatus.UNAVAILABLE.value)
-                return self._unavailable(task_id, operation, decision)
+                return self._unavailable(task_id, operation, decision, latency)
 
             provider = ChatProvider(self.ai.config()) if decision.execution_kind is ExecutionKind.AI else None
             hc = HandlerContext(
                 store=self.store, ai=self.ai, provider=provider, prepared=prepared,
                 request=request, repository=repository, route=decision,
+                broker=self.tools, user=user, task_id=task_id,
             )
             output: HandlerOutput = HANDLERS[operation](hc)
             latency = int((time.monotonic() - started) * 1000)
@@ -90,11 +96,15 @@ class IntelligenceGateway:
             raise IntelligenceError("The intelligence task failed unexpectedly.", code="internal_error") from exc
 
     def health(self) -> dict:
+        task_count = self.store.db.query_one("SELECT COUNT(*) AS count FROM intelligence_tasks")["count"]
+        execution_count = self.store.db.query_one("SELECT COUNT(*) AS count FROM model_executions")["count"]
         return {
             "configured": self.registry.is_configured(),
             "providers": len(self.registry.providers()),
             "models": len(self.registry.models()),
-            "operations": [op.value for op in Operation],
+            "tasks": task_count,
+            "model_executions": execution_count,
+            "operations": [op.value for op in Operation if op is not Operation.ASSISTANT_CHAT],
         }
 
     def providers(self) -> list[dict]:
@@ -161,7 +171,7 @@ class IntelligenceGateway:
             latency_ms=latency,
         )
 
-    def _unavailable(self, task_id: int, operation: Operation, decision: RouteDecision) -> IntelligenceResult:
+    def _unavailable(self, task_id: int, operation: Operation, decision: RouteDecision, latency: int) -> IntelligenceResult:
         return IntelligenceResult(
             task_id=task_id,
             operation=operation,
@@ -170,6 +180,7 @@ class IntelligenceGateway:
             confidence=Confidence.UNKNOWN,
             summary="This operation needs an AI provider, which is not configured.",
             limitations=list(decision.notes) or ["No AI provider is configured."],
+            latency_ms=latency,
         )
 
 

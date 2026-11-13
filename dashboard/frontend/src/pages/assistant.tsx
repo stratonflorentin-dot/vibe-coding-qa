@@ -107,6 +107,18 @@ export function AssistantPage() {
       };
       setMessages((previous) => [...previous, question, response.message]);
 
+      response.message.metadata = {
+        ...response.message.metadata,
+        task_id: response.task_id,
+        confidence: response.confidence,
+        limitations: response.limitations,
+        status: response.status,
+        execution: response.execution,
+        provider: response.provider,
+        model: response.model,
+        latency_ms: response.latency_ms,
+      };
+
       if (response.sources.length) {
         const sources = response.sources;
         setSourcesByMessage((previous) => ({ ...previous, [response.message.id]: sources }));
@@ -412,6 +424,18 @@ function MessageRow({
         ) : (
           <p className="whitespace-pre-wrap text-sm">{message.content}</p>
         )}
+        {isAssistant && message.metadata.task_id ? (
+          <div className="mt-2 border-t pt-2 text-[11px] text-muted-foreground">
+            <p>
+              Task #{String(message.metadata.task_id)} · confidence {String(message.metadata.confidence ?? "unknown")} · {String(message.metadata.status ?? "completed")}
+              {message.metadata.provider ? ` · ${String(message.metadata.provider)}/${String(message.metadata.model ?? "")}` : " · deterministic/fallback"}
+              {typeof message.metadata.latency_ms === "number" ? ` · ${message.metadata.latency_ms} ms` : ""}
+            </p>
+            {Array.isArray(message.metadata.limitations) && message.metadata.limitations.length ? (
+              <ul className="mt-1 list-disc pl-4">{message.metadata.limitations.map((item) => <li key={String(item)}>{String(item)}</li>)}</ul>
+            ) : null}
+          </div>
+        ) : null}
         {sources && sources.length ? (
           <div className="mt-2 border-t pt-2">
             <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">

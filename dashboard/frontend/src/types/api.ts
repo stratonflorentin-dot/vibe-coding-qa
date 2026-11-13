@@ -378,6 +378,15 @@ export interface AIChatResponse {
   message: AIMessage;
   configured: boolean;
   sources: Array<Record<string, unknown>>;
+  task_id?: number | null;
+  confidence?: string;
+  limitations?: string[];
+  status?: string;
+  execution?: string;
+  provider?: string | null;
+  model?: string | null;
+  latency_ms?: number | null;
+  fallback_used?: boolean;
 }
 
 export interface AIConversation {
@@ -405,6 +414,30 @@ export interface AIReviewResponse {
   model: string | null;
   error: string | null;
   content: Record<string, unknown>;
+  task_id?: number | null;
+  confidence?: string;
+  evidence?: Array<Record<string, unknown>>;
+  limitations?: string[];
+  status?: string;
+  execution?: string;
+  latency_ms?: number | null;
+}
+
+export interface IntelligenceTask {
+  id: number;
+  user_id: number | null;
+  project_id: number | null;
+  operation: string;
+  status: string;
+  error_code: string | null;
+  created_at: string;
+  completed_at: string | null;
+  executions: Array<{
+    id: number; provider_id: string | null; model_id: string | null;
+    execution_status: string; latency_ms: number | null; token_usage: number | null;
+    estimated_cost: number | null; fallback_used: number; created_at: string;
+  }>;
+  tool_calls: Array<{ id: number; tool_name: string; argument_names: string; status: string; created_at: string }>;
 }
 
 export interface Remediation {

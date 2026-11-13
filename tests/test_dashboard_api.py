@@ -457,6 +457,12 @@ class DashboardApiTests(unittest.TestCase):
         chat_body = chat.json()
         self.assertFalse(chat_body["configured"])
         self.assertIn("not configured", chat_body["message"]["content"].lower())
+        self.assertIsInstance(chat_body["task_id"], int)
+        self.assertEqual(chat_body["status"], "partial")
+        self.assertTrue(chat_body["limitations"])
+        task = self.client.get(f"/api/intelligence/tasks/{chat_body['task_id']}")
+        self.assertEqual(task.status_code, 200)
+        self.assertEqual(len(task.json()["executions"]), 1)
         conversation_id = chat_body["conversation_id"]
 
         history = self.client.get(f"/api/ai/conversations/{conversation_id}").json()
@@ -468,6 +474,8 @@ class DashboardApiTests(unittest.TestCase):
         review = self.client.post(f"/api/ai/findings/{finding_id}/review", json={"kind": "analyst"})
         self.assertEqual(review.status_code, 200)
         self.assertFalse(review.json()["configured"])
+        self.assertIsInstance(review.json()["task_id"], int)
+        self.assertEqual(review.json()["evidence"][0]["kind"], "finding")
 
         test_draft = self.client.post(f"/api/ai/findings/{finding_id}/test")
         self.assertEqual(test_draft.status_code, 200)

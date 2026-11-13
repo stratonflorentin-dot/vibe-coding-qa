@@ -39,6 +39,7 @@ ROUTING: dict[Operation, RoutePolicy] = {
     Operation.MAP_ARCHITECTURE: RoutePolicy(ExecutionKind.DETERMINISTIC, None, True),
     Operation.ANALYZE_REGRESSION: RoutePolicy(ExecutionKind.DETERMINISTIC, None, True),
     Operation.SUMMARIZE_VERIFICATION: RoutePolicy(ExecutionKind.DETERMINISTIC, None, True),
+    Operation.ASSISTANT_CHAT: RoutePolicy(ExecutionKind.AI, Capability.CHAT, True),
     Operation.ANALYZE_PROJECT: RoutePolicy(ExecutionKind.AI, Capability.CODE, True),
     Operation.DISCOVER_FEATURES: RoutePolicy(ExecutionKind.AI, Capability.CODE, True),
     Operation.GENERATE_TEST_PLAN: RoutePolicy(ExecutionKind.AI, Capability.REASONING, True),

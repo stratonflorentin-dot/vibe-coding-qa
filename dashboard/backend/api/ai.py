@@ -29,6 +29,7 @@ from ..schemas import (
     ThreatModelOut,
     ThreatModelRequest,
 )
+from ..intelligence.contracts import IntelligenceRequest, Operation
 from .deps import Services, get_services, require_admin, require_analyst
 
 router = APIRouter(tags=["ai"])
@@ -40,12 +41,23 @@ AdminDep = Annotated[dict, Depends(require_admin)]
 
 # ------------------------------------------------------------------- assistant
 @router.post("/api/ai/chat", response_model=AIChatResponse)
-def chat(payload: AIChatRequest, services: ServicesDep, _user: AnalystDep) -> dict:
-    return services.ai.chat(
-        message=payload.message,
-        repository_id=payload.repository_id,
-        conversation_id=payload.conversation_id,
-    )
+def chat(payload: AIChatRequest, services: ServicesDep, user: AnalystDep) -> dict:
+    result = services.intelligence.execute(IntelligenceRequest(
+        operation=Operation.ASSISTANT_CHAT, question=payload.message,
+        repository_id=payload.repository_id, conversation_id=payload.conversation_id,
+    ), user=user)
+    data = result.data
+    conversation_id = data.get("conversation_id")
+    message = services.store.list_messages(conversation_id)[-1] if conversation_id else {
+        "id": 0, "role": "assistant", "content": result.summary, "created_at": "", "metadata": {}
+    }
+    return {"conversation_id": conversation_id or 0, "message": message,
+            "configured": bool(result.provider),
+            "sources": [item.model_dump() for item in result.evidence],
+            "task_id": result.task_id, "confidence": result.confidence.value,
+            "limitations": result.limitations, "status": result.status.value,
+            "execution": result.execution_kind.value, "provider": result.provider, "model": result.model,
+            "latency_ms": result.latency_ms, "fallback_used": result.fallback_used}
 
 
 @router.get("/api/ai/conversations", response_model=list[ConversationOut])
@@ -76,9 +88,22 @@ def delete_conversation(conversation_id: int, services: ServicesDep, _user: Anal
 # -------------------------------------------------------------- security analyst
 @router.post("/api/ai/findings/{finding_id}/review", response_model=AIReviewOut)
 def review_finding(
-    finding_id: int, payload: AIReviewRequest, services: ServicesDep, _user: AnalystDep
+    finding_id: int, payload: AIReviewRequest, services: ServicesDep, user: AnalystDep
 ) -> dict:
-    return services.ai.review_finding(finding_id, payload.kind)
+    result = services.intelligence.execute(IntelligenceRequest(
+        operation=Operation.DIAGNOSE_FAILURE, finding_id=finding_id, scope=payload.kind,
+    ), user=user)
+    content = {
+        "kind": payload.kind, "text": result.data.get("probable_root_cause") or result.summary
+    }
+    return {"finding_id": finding_id,
+            "configured": bool(result.provider),
+            "provider": result.provider, "model": result.model,
+            "error": None, "content": content,
+            "task_id": result.task_id, "confidence": result.confidence.value,
+            "evidence": [item.model_dump() for item in result.evidence],
+            "limitations": result.limitations, "status": result.status.value,
+            "execution": result.execution_kind.value, "latency_ms": result.latency_ms}
 
 
 @router.post("/api/ai/findings/{finding_id}/test", response_model=TestGenerateOut)
@@ -115,19 +140,19 @@ def get_remediation(proposal_id: int, services: ServicesDep) -> dict:
 
 @router.post("/api/ai/remediations/{proposal_id}/approve", response_model=RemediationOut)
 def approve_remediation(
-    proposal_id: int, payload: ApproveRequest, services: ServicesDep, _user: AdminDep
+    proposal_id: int, payload: ApproveRequest, services: ServicesDep, user: AdminDep
 ) -> dict:
     """Apply a proposal to the working tree.
 
     Requires ``confirm = true``; a backup of the original file is written first
     so the change can be rolled back.
     """
-    return services.ai.approve_remediation(
-        proposal_id,
-        confirm=payload.confirm,
-        run_tests=payload.run_tests,
-        explicit_permission=payload.explicit_permission,
-    )
+    return services.intelligence.tools.call(
+        "approve_remediation",
+        {"proposal_id": proposal_id, "confirm": payload.confirm,
+         "run_tests": payload.run_tests, "explicit_permission": payload.explicit_permission},
+        user=user,
+    )["result"]
 
 
 @router.post("/api/ai/remediations/{proposal_id}/rollback", response_model=RemediationOut)

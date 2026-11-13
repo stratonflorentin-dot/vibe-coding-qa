@@ -31,6 +31,7 @@ from .contracts import (
 )
 from .exceptions import InvalidTaskError, ProviderFailedError, ProviderUnavailableError
 from .router import RouteDecision
+from .tool_broker import ToolBroker
 
 SYSTEM_GUARD = (
     "You are Vibe Intelligence, analysing a software project for a QA platform. "
@@ -52,6 +53,9 @@ class HandlerContext:
     request: IntelligenceRequest
     repository: dict | None
     route: RouteDecision
+    broker: ToolBroker
+    user: dict
+    task_id: int
 
 
 @dataclass
@@ -87,7 +91,7 @@ def _degraded(hc: HandlerContext) -> bool:
 
 # --------------------------------------------------------------- deterministic
 def map_architecture(hc: HandlerContext) -> HandlerOutput:
-    arch = build_architecture(hc.store, hc.repository)
+    arch = hc.broker.call("architecture", {"repository_id": hc.repository["id"]}, user=hc.user, task_id=hc.task_id)["result"]
     nodes = arch.get("nodes") or []
     edges = arch.get("edges") or []
     buckets: dict[str, list[str]] = {}
@@ -222,6 +226,26 @@ def generate_test_plan(hc: HandlerContext) -> HandlerOutput:
     return out
 
 
+def assistant_chat(hc: HandlerContext) -> HandlerOutput:
+    """Run a user question through the established assistant conversation service."""
+    question = (hc.request.question or "").strip()
+    if not question:
+        raise InvalidTaskError("A question is required.")
+    response = hc.ai.chat(message=question, repository_id=hc.repository["id"] if hc.repository else None,
+                          conversation_id=hc.request.conversation_id)
+    answer = response.get("message", {}).get("content", "")
+    configured = bool(response.get("configured"))
+    error = bool(response.get("message", {}).get("metadata", {}).get("error"))
+    return HandlerOutput(
+        status=TaskStatus.COMPLETED if configured and not error else TaskStatus.PARTIAL,
+        confidence=Confidence.MEDIUM if configured and not error else Confidence.LOW,
+        summary=answer[:600], data={"answer": answer, "conversation_id": response.get("conversation_id")},
+        evidence=list(hc.prepared.evidence),
+        limitations=list(hc.prepared.limitations) + (["Answer is advisory and grounded in available dashboard context."] if configured else ["AI provider is not configured; no answer was generated."]),
+        fallback_used=not configured,
+    )
+
+
 # ----------------------------------------------------- finding-grounded (reuse)
 def diagnose_failure(hc: HandlerContext) -> HandlerOutput:
     finding = hc.store.get_finding(hc.request.finding_id)
@@ -230,7 +254,8 @@ def diagnose_failure(hc: HandlerContext) -> HandlerOutput:
     evidence = [EvidenceRef(kind=EvidenceKind.FINDING, ref=str(finding["id"]), line=finding.get("line"), detail=finding["rule"])]
     confirmed = f"Confirmed scanner evidence: [{finding['severity']}] {finding['rule']} — {finding.get('message')} ({finding['file']}:{finding['line']})."
 
-    review = hc.ai.review_finding(finding["id"], "analyst")
+    kind = hc.request.scope if hc.request.scope in {"analyst", "explain", "impact"} else "analyst"
+    review = hc.ai.review_finding(finding["id"], kind)
     if not review.get("configured"):
         return HandlerOutput(
             status=TaskStatus.PARTIAL, confidence=Confidence.MEDIUM,
@@ -242,7 +267,7 @@ def diagnose_failure(hc: HandlerContext) -> HandlerOutput:
     if review.get("error"):
         return HandlerOutput(
             status=TaskStatus.PARTIAL, confidence=Confidence.MEDIUM, summary=confirmed,
-            data={"observed": confirmed, "probable_root_cause": None, "provider_error": review["error"]},
+            data={"observed": confirmed, "probable_root_cause": None},
             evidence=evidence,
             limitations=["The AI provider call failed; only the confirmed finding is reported."],
         )
@@ -261,7 +286,7 @@ def propose_repair(hc: HandlerContext) -> HandlerOutput:
     if finding is None:
         raise InvalidTaskError(f"Finding {hc.request.finding_id} was not found.")
     try:
-        proposal = hc.ai.propose_remediation(finding["id"])
+        proposal = hc.broker.call("propose_remediation", {"finding_id": finding["id"]}, user=hc.user, task_id=hc.task_id)["result"]
     except AIError as exc:
         raise ProviderUnavailableError(str(exc)) from exc
     evidence = [
@@ -281,6 +306,7 @@ HANDLERS = {
     Operation.MAP_ARCHITECTURE: map_architecture,
     Operation.ANALYZE_REGRESSION: analyze_regression,
     Operation.SUMMARIZE_VERIFICATION: summarize_verification,
+    Operation.ASSISTANT_CHAT: assistant_chat,
     Operation.ANALYZE_PROJECT: analyze_project,
     Operation.DISCOVER_FEATURES: discover_features,
     Operation.GENERATE_TEST_PLAN: generate_test_plan,

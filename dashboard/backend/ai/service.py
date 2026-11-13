@@ -350,7 +350,7 @@ class AIService:
             answer = ChatProvider(config).complete(turns)
         except AIError as exc:
             reply = self.store.add_message(
-                conversation_id, "assistant", f"AI request failed: {exc}",
+                conversation_id, "assistant", "AI request failed. Check provider configuration and try again.",
                 metadata={"error": True},
             )
             return {"conversation_id": conversation_id, "message": reply, "configured": True, "sources": sources}
@@ -379,10 +379,11 @@ class AIService:
         except AIError as exc:
             self.store.add_ai_review(
                 finding_id=finding_id, scan_id=finding["scan_id"], provider=config.provider,
-                model=config.model, kind=kind, content=None, error=str(exc),
+                model=config.model, kind=kind, content=None,
+                error="The AI provider call could not be completed.",
             )
             return {"finding_id": finding_id, "configured": True, "provider": config.provider,
-                    "model": config.model, "error": str(exc), "content": {}}
+                    "model": config.model, "error": "The AI provider call could not be completed.", "content": {}}
 
         content = {"kind": kind, "text": answer}
         self.store.add_ai_review(

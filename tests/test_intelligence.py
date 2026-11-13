@@ -34,6 +34,7 @@ from dashboard.backend.intelligence.exceptions import (
 from dashboard.backend.intelligence.gateway import IntelligenceGateway
 from dashboard.backend.intelligence.model_registry import Capability, ModelRegistry, capabilities_for
 from dashboard.backend.intelligence.router import Router
+from dashboard.backend.intelligence.tool_broker import ToolBroker
 
 
 class _FakeProvider:
@@ -144,6 +145,38 @@ class RegistryTests(unittest.TestCase):
         db.close()
 
 
+class ToolBrokerTests(unittest.TestCase):
+    def setUp(self):
+        self.db = Database(":memory:")
+        self.store = Store(self.db)
+        self.ai = AIService(self.store, reset_settings())
+        self.broker = ToolBroker(self.store, self.ai)
+        self.user, self.repo, _ = _seed(self.store)
+
+    def tearDown(self):
+        self.db.close()
+
+    def test_broker_allows_known_analysis_and_records_metadata(self):
+        with mock.patch("dashboard.backend.intelligence.tool_broker.build_architecture", return_value={"nodes": [], "edges": []}):
+            result = self.broker.call("architecture", {"repository_id": self.repo["id"]}, user=self.user)
+        self.assertEqual(result["status"], "completed")
+        entry = self.store.list_audit(1)[0]
+        self.assertEqual(entry["action"], "intelligence_tool")
+        self.assertNotIn(str(self.repo["id"]), entry["detail"].split("argument_names=")[-1])
+
+    def test_broker_rejects_unknown_tool_and_arbitrary_arguments(self):
+        with self.assertRaises(ValueError):
+            self.broker.call("shell", {"command": "whoami"}, user=self.user)
+        with self.assertRaises(ValueError):
+            self.broker.call("architecture", {"repository_id": self.repo["id"], "url": "https://example.com"}, user=self.user)
+
+    def test_broker_enforces_role_and_explicit_remediation_confirmation(self):
+        with self.assertRaises(PermissionError):
+            self.broker.call("propose_remediation", {"finding_id": 1}, user={"role": "viewer"})
+        with self.assertRaises(ValueError):
+            self.broker.call("approve_remediation", {"proposal_id": 1, "confirm": False}, user=self.user)
+
+
 class ContextEngineTests(unittest.TestCase):
     def setUp(self):
         self.db = Database(":memory:")
@@ -193,6 +226,17 @@ class GatewayTests(unittest.TestCase):
         task = self.store.get_intelligence_task(res.task_id)
         self.assertEqual(task["status"], "completed")
         self.assertEqual(len(task["executions"]), 1)
+
+    def test_architecture_records_tool_and_execution_metadata(self):
+        result = self.gw.execute(
+            IntelligenceRequest(operation=Operation.MAP_ARCHITECTURE, repository_id=self.repo["id"]),
+            user=self.actor,
+        )
+        task = self.gw.get_task(result.task_id)
+        self.assertEqual(len(task["executions"]), 1)
+        self.assertEqual(task["executions"][0]["execution_status"], "completed")
+        self.assertEqual(task["tool_calls"][0]["tool_name"], "architecture")
+        self.assertEqual(task["tool_calls"][0]["status"], "completed")
 
     def test_missing_required_field(self):
         with self.assertRaises(InvalidTaskError):

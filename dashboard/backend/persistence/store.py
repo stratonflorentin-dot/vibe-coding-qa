@@ -761,7 +761,19 @@ class Store:
                 "SELECT * FROM model_executions WHERE task_id = ? ORDER BY id", (task_id,)
             )
         ]
+        task["tool_calls"] = [
+            dict(r) for r in self.db.query(
+                "SELECT * FROM intelligence_tool_calls WHERE task_id = ? ORDER BY id", (task_id,)
+            )
+        ]
         return task
+
+    def record_intelligence_tool_call(self, *, task_id: int | None, user_id: int | None,
+                                      tool_name: str, argument_names: str, status: str) -> None:
+        self.db.execute(
+            "INSERT INTO intelligence_tool_calls (task_id, user_id, tool_name, argument_names, status, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            (task_id, user_id, tool_name, argument_names, status, utcnow()),
+        )
 
     def list_intelligence_tasks(self, *, project_id: int | None = None, limit: int = 50) -> list[dict]:
         if project_id is None:

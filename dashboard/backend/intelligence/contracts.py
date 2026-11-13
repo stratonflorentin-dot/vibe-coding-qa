@@ -24,6 +24,7 @@ class Operation(str, Enum):
     PROPOSE_REPAIR = "propose_repair"
     ANALYZE_REGRESSION = "analyze_regression"
     SUMMARIZE_VERIFICATION = "summarize_verification"
+    ASSISTANT_CHAT = "assistant_chat"
 
 
 class TaskStatus(str, Enum):
@@ -94,6 +95,7 @@ class IntelligenceRequest(BaseModel):
     commit: str | None = Field(default=None, max_length=64)
     scope: str | None = Field(default=None, max_length=200)
     question: str | None = Field(default=None, max_length=4_000)
+    conversation_id: int | None = Field(default=None, ge=1)
     context: ContextOptions = Field(default_factory=ContextOptions)
     max_output_tokens: int | None = Field(default=None, ge=16, le=16_000)
 
@@ -126,6 +128,7 @@ REQUIRED_FIELDS: dict[Operation, tuple[str, ...]] = {
     Operation.PROPOSE_REPAIR: ("finding_id",),
     Operation.ANALYZE_REGRESSION: ("base_scan_id", "head_scan_id"),
     Operation.SUMMARIZE_VERIFICATION: ("scan_id",),
+    Operation.ASSISTANT_CHAT: ("question",),
 }
 
 

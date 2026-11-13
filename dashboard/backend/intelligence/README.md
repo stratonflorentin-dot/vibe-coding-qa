@@ -15,6 +15,7 @@ backend starts and runs fine **without any AI provider configured**.
 | `router.py` | Deterministic routing. AI ops degrade to deterministic evidence (or `unavailable`) when no capable provider exists; capability mismatches are flagged, never a silent downgrade. |
 | `context_engine.py` | Minimum **redacted** context from the store (metadata, scan, findings, optional architecture/dependencies), budgeted, with real evidence refs. Source contents off by default. |
 | `gateway.py` | validate → resolve/authorise project → prepare context → route → execute → persist task + model execution → structured result. |
+| `tool_broker.py` | Strict allow-list for static analysis, scan results, and the existing remediation approval workflow; checks role, arguments and confirmation, then records metadata without content. |
 | `handlers.py` | Deterministic handlers + AI handlers that reuse the tested AI service for finding-grounded ops. A standing system guard treats project content as untrusted **data** (prompt-injection defence). Verification never fabricates passing tests. |
 | `evaluations.py` | Evidence-reference validation, result scoring, and a synthetic benchmark description. Confidence is kept separate from measured accuracy. |
 
@@ -55,7 +56,14 @@ The key lives server-side only (env or in-memory from the settings form); it is
 never persisted to SQLite, never returned by any endpoint, and redacted from
 every message sent to a provider.
 
+The existing `/api/ai/chat` and finding-review endpoints remain available and
+route through Intelligence. Responses include task IDs, evidence, confidence,
+limitations and model/execution metadata. Their historic conversation and review
+records remain intact.
+
 ## Persistence
 
 Migration **v5**: `intelligence_tasks` (one row per task) and `model_executions`
-(provider/model/latency/fallback). No secrets, prompts, or source are stored.
+(provider/model/latency/fallback). Migration **v6** adds `intelligence_tool_calls`.
+No secrets, prompts, argument values or source are stored; tool call records retain
+only the tool name, argument names, status and actor.
