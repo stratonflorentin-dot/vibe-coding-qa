@@ -14,6 +14,7 @@ from fastapi import HTTPException, Request
 from ..accounts import Role, role_at_least
 from ..ai.service import AIService
 from ..config import Settings, get_settings
+from ..intelligence.gateway import IntelligenceGateway
 from ..persistence.database import Database
 from ..persistence.store import Store
 from ..services.accounts_service import AccountService
@@ -34,6 +35,7 @@ class Services:
     ai: AIService
     accounts: AccountService
     security_lab: SecurityLabService
+    intelligence: IntelligenceGateway
 
 
 def build_services(settings: Settings | None = None) -> Services:
@@ -41,6 +43,7 @@ def build_services(settings: Settings | None = None) -> Services:
     database = Database(resolved.db_path)
     store = Store(database)
     repositories = RepositoryService(store, resolved)
+    ai = AIService(store, resolved)
     return Services(
         settings=resolved,
         database=database,
@@ -48,9 +51,10 @@ def build_services(settings: Settings | None = None) -> Services:
         repositories=repositories,
         scans=ScanRunner(store, resolved, repositories),
         dashboard=DashboardService(store, resolved),
-        ai=AIService(store, resolved),
+        ai=ai,
         accounts=AccountService(store, resolved),
         security_lab=SecurityLabService(store, max_concurrency=resolved.max_concurrent_scans),
+        intelligence=IntelligenceGateway(store, ai, resolved),
     )
 
 

@@ -372,6 +372,42 @@ MIGRATIONS: list[tuple[int, list[str]]] = [
             "CREATE INDEX idx_security_occurrences_job ON security_finding_occurrences(job_id, finding_id)",
         ],
     ),
+    (
+        5,
+        [
+            # Vibe Intelligence: one row per intelligence task, with its model
+            # executions. No secrets, prompts or source are stored here.
+            """
+            CREATE TABLE intelligence_tasks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                project_id INTEGER REFERENCES repositories(id) ON DELETE SET NULL,
+                operation TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'running',
+                error_code TEXT,
+                created_at TEXT NOT NULL,
+                completed_at TEXT
+            )
+            """,
+            "CREATE INDEX idx_intel_tasks_id ON intelligence_tasks(id DESC)",
+            "CREATE INDEX idx_intel_tasks_project ON intelligence_tasks(project_id, id DESC)",
+            """
+            CREATE TABLE model_executions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                task_id INTEGER NOT NULL REFERENCES intelligence_tasks(id) ON DELETE CASCADE,
+                provider_id TEXT,
+                model_id TEXT,
+                execution_status TEXT NOT NULL,
+                latency_ms INTEGER,
+                token_usage INTEGER,
+                estimated_cost REAL,
+                fallback_used INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL
+            )
+            """,
+            "CREATE INDEX idx_model_exec_task ON model_executions(task_id)",
+        ],
+    ),
 ]
 
 

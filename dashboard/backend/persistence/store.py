@@ -721,6 +721,58 @@ class Store:
         rows = self.db.query("SELECT * FROM audit_log ORDER BY id DESC LIMIT ?", (int(limit),))
         return [dict(row) for row in rows]
 
+    # ----------------------------------------------------------- intelligence
+    def create_intelligence_task(self, *, user_id: int | None, project_id: int | None, operation: str) -> dict:
+        cursor = self.db.execute(
+            "INSERT INTO intelligence_tasks (user_id, project_id, operation, status, created_at) VALUES (?, ?, ?, 'running', ?)",
+            (user_id, project_id, operation, utcnow()),
+        )
+        return dict(self.db.query_one("SELECT * FROM intelligence_tasks WHERE id = ?", (cursor.lastrowid,)))
+
+    def complete_intelligence_task(self, task_id: int, *, status: str, error_code: str | None = None) -> None:
+        self.db.execute(
+            "UPDATE intelligence_tasks SET status = ?, error_code = ?, completed_at = ? WHERE id = ?",
+            (status, error_code, utcnow(), task_id),
+        )
+
+    def record_model_execution(
+        self, *, task_id: int, provider_id: str | None, model_id: str | None,
+        execution_status: str, latency_ms: int | None = None, token_usage: int | None = None,
+        estimated_cost: float | None = None, fallback_used: bool = False,
+    ) -> None:
+        self.db.execute(
+            """
+            INSERT INTO model_executions
+                (task_id, provider_id, model_id, execution_status, latency_ms, token_usage,
+                 estimated_cost, fallback_used, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (task_id, provider_id, model_id, execution_status, latency_ms, token_usage,
+             estimated_cost, 1 if fallback_used else 0, utcnow()),
+        )
+
+    def get_intelligence_task(self, task_id: int) -> dict | None:
+        row = self.db.query_one("SELECT * FROM intelligence_tasks WHERE id = ?", (task_id,))
+        if not row:
+            return None
+        task = dict(row)
+        task["executions"] = [
+            dict(r) for r in self.db.query(
+                "SELECT * FROM model_executions WHERE task_id = ? ORDER BY id", (task_id,)
+            )
+        ]
+        return task
+
+    def list_intelligence_tasks(self, *, project_id: int | None = None, limit: int = 50) -> list[dict]:
+        if project_id is None:
+            rows = self.db.query("SELECT * FROM intelligence_tasks ORDER BY id DESC LIMIT ?", (int(limit),))
+        else:
+            rows = self.db.query(
+                "SELECT * FROM intelligence_tasks WHERE project_id = ? ORDER BY id DESC LIMIT ?",
+                (project_id, int(limit)),
+            )
+        return [dict(row) for row in rows]
+
     # ------------------------------------------------------- security workers
     def create_security_worker(
         self,

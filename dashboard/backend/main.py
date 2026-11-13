@@ -28,11 +28,12 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from . import __version__
 from .ai.provider import AIError
-from .api import ai, auth, dashboard, findings, intel, repositories, scans, security, system
+from .api import ai, auth, dashboard, findings, intel, intelligence, repositories, scans, security, system
 from .api.deps import build_services
 from .config import Settings, get_settings
 from .security import ValidationError, safe_error
 from .accounts import PasswordPolicyError
+from .intelligence.exceptions import IntelligenceError
 from .sessions import COOKIE_NAME, auth_credential, check_basic, cookie_value, valid_token
 
 
@@ -255,6 +256,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def _password_policy(_: Request, exc: PasswordPolicyError) -> JSONResponse:
         return JSONResponse(status_code=400, content={"detail": str(exc), "code": "validation_error"})
 
+    @app.exception_handler(IntelligenceError)
+    async def _intelligence_error(_: Request, exc: IntelligenceError) -> JSONResponse:
+        return JSONResponse(status_code=exc.http_status, content={"detail": str(exc), "code": exc.code})
+
     @app.exception_handler(AIError)
     async def _ai_error(_: Request, exc: AIError) -> JSONResponse:
         return JSONResponse(status_code=400, content={"detail": str(exc), "code": "ai_error"})
@@ -266,7 +271,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             content={"detail": safe_error(exc, "The requested item was not found."), "code": "not_found"},
         )
 
-    for module in (system, auth, dashboard, repositories, scans, security, findings, ai, intel):
+    for module in (system, auth, dashboard, repositories, scans, security, findings, ai, intel, intelligence):
         app.include_router(module.router)
 
     # Serve the built single-page dashboard when present, so one process (and one
